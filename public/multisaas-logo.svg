@@ -1,0 +1,16 @@
+﻿<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFD700"/>
+      <stop offset="100%" stop-color="#FFA500"/>
+    </linearGradient>
+    <filter id="goldGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur" in2="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <circle cx="60" cy="60" r="56" fill="url(#goldGradient)" fill-opacity="0.08" stroke="url(#goldGradient)" stroke-width="1.5"/>
+  <path d="M38 38 L50 38 L50 50 L62 50 L62 38 L74 38 L74 74 L62 74 L62 62 L50 62 L50 74 L38 74 L38 38 Z" fill="url(#goldGradient)" filter="url(#goldGlow)"/>
+</svg>
