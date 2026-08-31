@@ -10,12 +10,14 @@ import {
   CheckCircle2,
   Loader2,
   AlertCircle,
+  Phone,
 } from "lucide-react";
 
 interface WsStatus {
   ready: boolean;
   state: string;
   qr: string | null;
+  phoneNumber: string | null;
 }
 
 export default function SettingsPage() {
@@ -43,7 +45,7 @@ export default function SettingsPage() {
   }, [fetchStatus]);
 
   useEffect(() => {
-    const shouldPoll = status && !status.ready && !connecting ? true : false;
+    const shouldPoll = status?.ready !== true && !connecting;
     if (shouldPoll) {
       if (!pollRef.current) {
         pollRef.current = setInterval(fetchStatus, 2500);
@@ -120,8 +122,12 @@ export default function SettingsPage() {
             </h2>
             <p className="text-xs text-neutral-500">
               {connected
-                ? "Your WhatsApp session is active."
-                : "Scan the QR code with the WhatsApp app to connect."}
+                ? status?.phoneNumber
+                  ? `Your WhatsApp session is active (+${status.phoneNumber}).`
+                  : "Your WhatsApp session is active."
+                : status?.state === "INITIALIZING"
+                  ? "Starting WhatsApp engine, please wait…"
+                  : "Scan the QR code with the WhatsApp app to connect."}
             </p>
           </div>
         </div>
@@ -134,20 +140,25 @@ export default function SettingsPage() {
                 : "border-neutral-700 bg-neutral-800/50 text-neutral-400"
             }`}
           >
-            {connected ? (
-              <>
-                <CheckCircle2 className="h-3 w-3" />
-                Connected
-              </>
-            ) : (
-              <>
-                <AlertCircle className="h-3 w-3" />
-                {status ? `State: ${status.state}` : "Disconnected"}
-              </>
-            )}
-          </span>
-
           {connected ? (
+            <>
+              <CheckCircle2 className="h-3 w-3" />
+              Connected
+            </>
+          ) : status?.state === "INITIALIZING" ? (
+            <>
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Initializing…
+            </>
+          ) : (
+            <>
+              <AlertCircle className="h-3 w-3" />
+              {status ? `State: ${status.state}` : "Disconnected"}
+            </>
+          )}
+        </span>
+
+        {connected ? (
             <button
               onClick={handleDisconnect}
               disabled={busy}
@@ -175,6 +186,18 @@ export default function SettingsPage() {
             </button>
           )}
         </div>
+
+        {connected && (
+          <div className="mt-4 flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-950/50 px-4 py-2.5">
+            <Phone className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm text-neutral-400">Connected number:</span>
+            {status?.phoneNumber ? (
+              <span className="font-medium text-neutral-100">+{status.phoneNumber}</span>
+            ) : (
+              <Loader2 className="h-4 w-4 animate-spin text-neutral-500" />
+            )}
+          </div>
+        )}
 
         {error && (
           <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">

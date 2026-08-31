@@ -1,4 +1,8 @@
 import type { Client, MessageSendOptions } from "whatsapp-web.js";
+import fs from "fs";
+import path from "path";
+
+const SESSION_DIR = path.resolve(process.cwd(), ".wwebjs_auth", "session");
 
 export interface ObfuscationOptions {
   enabled?: boolean;
@@ -95,8 +99,6 @@ type DisconnectedCallback = (reason: string) => void;
 type AuthFailureCallback = () => void;
 
 class WhatsAppEngine {
-  private static instance: WhatsAppEngine | null = null;
-
   private client: Client | null = null;
   private ready = false;
   private lastQr: string | null = null;
@@ -106,16 +108,18 @@ class WhatsAppEngine {
   private authFailureCallback: AuthFailureCallback | null = null;
   private obfuscationOptions: Required<ObfuscationOptions>;
   private wapi: typeof import("whatsapp-web.js") | null = null;
+  private initPromise: Promise<void> | null = null;
 
   private constructor() {
     this.obfuscationOptions = { ...defaultObfuscationOptions };
   }
 
   static getInstance(): WhatsAppEngine {
-    if (!WhatsAppEngine.instance) {
-      WhatsAppEngine.instance = new WhatsAppEngine();
+    const g = globalThis as unknown as { __whatsAppEngine?: WhatsAppEngine };
+    if (!g.__whatsAppEngine) {
+      g.__whatsAppEngine = new WhatsAppEngine();
     }
-    return WhatsAppEngine.instance;
+    return g.__whatsAppEngine;
   }
 
   private async loadLib() {
@@ -129,67 +133,79 @@ class WhatsAppEngine {
     if (this.client) {
       return;
     }
-
-    const lib = await this.loadLib();
-
-    const defaultPuppeteerOptions = {
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",
-        "--disable-gpu",
-        "--disable-extensions",
-      ],
-    };
-
-    this.client = new lib.Client({
-      puppeteer: puppeteerOptions ?? defaultPuppeteerOptions,
-    });
-
-    this.client.on("qr", (qr: string) => {
-      this.ready = false;
-      this.lastQr = qr;
-      if (this.qrCallback) {
-        this.qrCallback(qr);
-      }
-    });
-
-    this.client.on("ready", () => {
-      this.ready = true;
-      this.lastQr = null;
-      if (this.readyCallback) {
-        this.readyCallback();
-      }
-    });
-
-    this.client.on("disconnected", (reason: string) => {
-      this.ready = false;
-      if (this.disconnectedCallback) {
-        this.disconnectedCallback(reason);
-      }
-    });
-
-    this.client.on("auth_failure", () => {
-      this.ready = false;
-      if (this.authFailureCallback) {
-        this.authFailureCallback();
-      }
-    });
-
-    try {
-      await this.client.initialize();
-    } catch (err) {
-      try {
-        await this.client?.destroy();
-      } catch {
-        /* ignore */
-      }
-      this.client = null;
-      this.ready = false;
-      this.lastQr = null;
-      throw err;
+    if (this.initPromise) {
+      return this.initPromise;
     }
+
+    this.initPromise = (async () => {
+      const lib = await this.loadLib();
+
+      const defaultPuppeteerOptions = {
+        headless: true,
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+          "--disable-extensions",
+        ],
+      };
+
+      this.client = new lib.Client({
+        authStrategy: new lib.LocalAuth({
+          dataPath: path.resolve(process.cwd(), ".wwebjs_auth"),
+        }),
+        puppeteer: puppeteerOptions ?? defaultPuppeteerOptions,
+      });
+
+      this.client.on("qr", (qr: string) => {
+        this.ready = false;
+        this.lastQr = qr;
+        if (this.qrCallback) {
+          this.qrCallback(qr);
+        }
+      });
+
+      this.client.on("ready", () => {
+        this.ready = true;
+        this.lastQr = null;
+        if (this.readyCallback) {
+          this.readyCallback();
+        }
+      });
+
+      this.client.on("disconnected", (reason: string) => {
+        this.ready = false;
+        if (this.disconnectedCallback) {
+          this.disconnectedCallback(reason);
+        }
+      });
+
+      this.client.on("auth_failure", () => {
+        this.ready = false;
+        if (this.authFailureCallback) {
+          this.authFailureCallback();
+        }
+      });
+
+      try {
+        await this.client.initialize();
+      } catch (err) {
+        try {
+          await this.client?.destroy();
+        } catch {
+          /* ignore */
+        }
+        this.client = null;
+        this.ready = false;
+        this.lastQr = null;
+        throw err;
+      } finally {
+        this.initPromise = null;
+      }
+    })();
+
+    return this.initPromise;
   }
 
   onQR(callback: QRCallback): void {
@@ -212,23 +228,60 @@ class WhatsAppEngine {
     state: string;
     ready: boolean;
     qr: string | null;
+    phoneNumber: string | null;
   }> {
     if (!this.client) {
-      return { state: "UNLAUNCHED", ready: false, qr: this.lastQr };
+      return { state: "UNLAUNCHED", ready: false, qr: this.lastQr, phoneNumber: null };
     }
 
     let state = "UNKNOWN";
     try {
       state = String(await this.client.getState());
     } catch {
-      state = "UNKNOWN";
+      if (this.initPromise) {
+        state = "INITIALIZING";
+      } else {
+        state = "UNKNOWN";
+      }
     }
 
     return {
       state,
       ready: this.ready,
       qr: this.ready ? null : this.lastQr,
+      phoneNumber: this.ready ? this.getPhoneNumber() : null,
     };
+  }
+
+  getPhoneNumber(): string | null {
+    if (!this.client) return null;
+    try {
+      const info = this.client.info;
+      if (!info) return null;
+
+      const wid = info.wid || info.me;
+      if (!wid) return null;
+
+      if (wid.server === 's.whatsapp.net' && wid.user) {
+        return wid.user;
+      }
+
+      if (wid._serialized && wid._serialized.includes('@s.whatsapp.net')) {
+        return wid._serialized.split('@')[0];
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  sessionExists(): boolean {
+    try {
+      return fs.existsSync(SESSION_DIR);
+    } catch {
+      return false;
+    }
   }
 
   setObfuscationOptions(options: ObfuscationOptions): void {
@@ -243,26 +296,52 @@ class WhatsAppEngine {
     if (!this.client) {
       throw new Error("WhatsApp client is not initialized");
     }
+    if (!this.ready) {
+      throw new Error("WhatsApp client is not ready yet");
+    }
+
+    const chatId = to.includes("@")
+      ? to
+      : `${to.replace(/[\+\s\-]/g, "")}@s.whatsapp.net`;
+
     const obfuscated = this.obfuscateMessage(text);
-    await this.client.sendMessage(to, obfuscated);
+    await this.client.sendMessage(chatId, obfuscated);
   }
 
   async sendImage(to: string, filePath: string, caption?: string): Promise<void> {
-    if (!this.client || !this.wapi) {
+    if (!this.client) {
       throw new Error("WhatsApp client is not initialized");
     }
+    if (!this.ready) {
+      throw new Error("WhatsApp client is not ready yet");
+    }
+    if (!this.wapi) {
+      throw new Error("WhatsApp client is not initialized");
+    }
+    const chatId = to.includes("@")
+      ? to
+      : `${to.replace(/[\+\s\-]/g, "")}@s.whatsapp.net`;
     const media = this.wapi.MessageMedia.fromFilePath(filePath);
     const options: MessageSendOptions = {};
     if (caption) {
       options.caption = this.obfuscateMessage(caption);
     }
-    await this.client.sendMessage(to, media, options);
+    await this.client.sendMessage(chatId, media, options);
   }
 
   async sendVideo(to: string, filePath: string, caption?: string): Promise<void> {
-    if (!this.client || !this.wapi) {
+    if (!this.client) {
       throw new Error("WhatsApp client is not initialized");
     }
+    if (!this.ready) {
+      throw new Error("WhatsApp client is not ready yet");
+    }
+    if (!this.wapi) {
+      throw new Error("WhatsApp client is not initialized");
+    }
+    const chatId = to.includes("@")
+      ? to
+      : `${to.replace(/[\+\s\-]/g, "")}@s.whatsapp.net`;
     const media = this.wapi.MessageMedia.fromFilePath(filePath);
     const options: MessageSendOptions = {
       sendMediaAsDocument: false,
@@ -270,7 +349,7 @@ class WhatsAppEngine {
     if (caption) {
       options.caption = this.obfuscateMessage(caption);
     }
-    await this.client.sendMessage(to, media, options);
+    await this.client.sendMessage(chatId, media, options);
   }
 
   async sendCombined(
@@ -289,10 +368,11 @@ class WhatsAppEngine {
   }
 
   async disconnect(): Promise<void> {
+    const g = globalThis as unknown as { __whatsAppEngine?: WhatsAppEngine };
     if (!this.client) {
       this.ready = false;
       this.lastQr = null;
-      WhatsAppEngine.instance = null;
+      g.__whatsAppEngine = undefined;
       return;
     }
     this.ready = false;
@@ -301,8 +381,10 @@ class WhatsAppEngine {
       await this.client.destroy();
     } finally {
       this.client = null;
-      WhatsAppEngine.instance = null;
+      g.__whatsAppEngine = undefined;
     }
+    // NOTE: client.destroy() keeps the on-disk session (LocalAuth profile),
+    // so the next connect restores the WhatsApp session without re-scanning.
   }
 }
 

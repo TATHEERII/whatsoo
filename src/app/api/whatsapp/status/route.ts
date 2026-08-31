@@ -13,6 +13,13 @@ export async function GET() {
 
   try {
     const engine = getWhatsAppEngine();
+
+    // Auto-restore a saved session in the background so navigating back to
+    // Settings (or a server restart) reconnects without re-scanning the QR.
+    if (engine.sessionExists() && !(await engine.getStatus()).ready) {
+      engine.initialize().catch(() => {});
+    }
+
     const status = await engine.getStatus();
 
     let qrImage: string | null = null;
@@ -28,8 +35,9 @@ export async function GET() {
       ready: status.ready,
       state: status.state,
       qr: qrImage,
+      phoneNumber: status.phoneNumber,
     });
   } catch {
-    return NextResponse.json({ ready: false, state: "UNLAUNCHED", qr: null });
+    return NextResponse.json({ ready: false, state: "UNLAUNCHED", qr: null, phoneNumber: null });
   }
 }

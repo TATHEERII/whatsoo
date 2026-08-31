@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { ensureUser } from "@/lib/ensureUser";
 import { getSqliteQueueService } from "@/lib/sqliteQueue";
 
 export async function POST(
@@ -12,10 +13,15 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
+  }
+
   const campaign = await prisma.campaign.findFirst({
     where: {
       id: params.id,
-      userId: session.user.id,
+      userId: dbUserId,
     },
   });
 

@@ -105,11 +105,11 @@ export default function ContactsPage() {
     if (lines.length < 2) return [];
 
     const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
-    const nameIdx = headers.findIndex((h) => ["name", "names"].includes(h));
+    const nameIdx = headers.findIndex((h) => ["name", "names", "full_name", "fullname", "contact_name", "contactname", "lead_name", "customer_name"].includes(h));
     const phoneIdx = headers.findIndex((h) =>
-      ["phone", "phone number", "phonenumber", "mobile"].includes(h)
+      ["phone", "phone_number", "phonenumber", "mobile", "whatsapp", "contact", "number"].includes(h)
     );
-    const emailIdx = headers.findIndex((h) => ["email", "e-mail"].includes(h));
+    const emailIdx = headers.findIndex((h) => ["email", "mail", "email_address", "emailaddress"].includes(h));
 
     const preview: ContactPreview[] = [];
     for (let i = 1; i < Math.min(lines.length, 6); i++) {

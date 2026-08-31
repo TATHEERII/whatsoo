@@ -76,6 +76,16 @@ const STATUS_CONFIG: Record<
     className:
       "border-red-500/30 bg-red-500/10 text-red-400",
   },
+  running: {
+    label: "Running",
+    className:
+      "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+  },
+  stopped: {
+    label: "Stopped",
+    className:
+      "border-neutral-700 bg-neutral-800/50 text-neutral-400",
+  },
 };
 
 const ACTION_CONFIG: Record<
@@ -189,15 +199,17 @@ export default function CampaignDetailPage() {
     fetchData();
   }, [fetchData]);
 
+  const isTerminal = campaign && ["completed", "failed", "stopped"].includes(campaign.status);
+
   useEffect(() => {
-    if (!campaign) return;
+    if (!campaign || isTerminal) return;
 
     const interval = setInterval(() => {
       fetchData();
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [campaign, fetchData]);
+  }, [campaign, fetchData, isTerminal]);
 
   const handleAction = async (action: string) => {
     setActionLoading(action);
@@ -383,7 +395,9 @@ export default function CampaignDetailPage() {
             Message Log
           </h2>
           <span className="text-xs text-neutral-500">
-            Auto-refreshing every 5s
+            {isTerminal
+              ? "Live updates stopped — campaign is finished"
+              : "Auto-refreshing every 5s"}
           </span>
         </div>
 

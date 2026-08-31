@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { ensureUser } from "@/lib/ensureUser";
 import { parse } from "csv-parse/sync";
 
 export async function POST(
@@ -12,10 +13,15 @@ export async function POST(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
+  }
+
   const contactList = await prisma.contactList.findFirst({
     where: {
       id: params.id,
-      userId: session.user.id,
+      userId: dbUserId,
     },
   });
 
@@ -43,30 +49,59 @@ export async function POST(
     }
 
     const createdContacts = [];
+    const skipped: string[] = [];
+
+    const lowerRecord = (rec: Record<string, string>): Record<string, string> => {
+      const out: Record<string, string> = {};
+      for (const k in rec) {
+        out[k.toLowerCase().replace(/\s+/g, "_")] = rec[k];
+      }
+      return out;
+    };
 
     for (const record of records) {
-      const name = record.name || record.Name || record.NAME;
-      const phoneNumber = record.phoneNumber || record.phone || record.Phone || record.PhoneNumber;
-      const email = record.email || record.Email || record.EMAIL;
+      const rec = lowerRecord(record);
 
-      if (!name) continue;
+      const name = rec.name || rec.full_name || rec.fullname || rec.contact_name || rec.contactname || rec.lead_name || rec.customer_name || "";
+      const phoneNumber = rec.phone || rec.phone_number || rec.phonenumber || rec.mobile || rec.whatsapp || rec.contact || rec.number || "";
+      const email = rec.email || rec.mail || rec.email_address || rec.emailaddress || "";
 
-      const contact = await prisma.contact.create({
-        data: {
-          name: name.trim(),
-          phoneNumber: phoneNumber?.trim() || null,
-          email: email?.trim() || null,
-          userId: session.user.id,
-          contactListId: contactList.id,
-        },
-      });
+      const trimmedPhone = phoneNumber?.trim() || "";
+      const trimmedName = name?.trim() || "";
 
-      createdContacts.push(contact);
+      if (!trimmedPhone) {
+        skipped.push("no phone");
+        continue;
+      }
+
+      const finalName = trimmedName || trimmedPhone;
+
+      try {
+        const contact = await prisma.contact.create({
+          data: {
+            name: finalName,
+            phoneNumber: trimmedPhone || null,
+            email: email?.trim() || null,
+            userId: dbUserId,
+            contactListId: contactList.id,
+          },
+        });
+
+        createdContacts.push(contact);
+      } catch (e) {
+        const err = e as { code?: string };
+        if (err?.code === "P2002") {
+          skipped.push(trimmedPhone);
+        } else {
+          throw e;
+        }
+      }
     }
 
     return NextResponse.json({
       success: true,
       imported: createdContacts.length,
+      skipped,
       contacts: createdContacts,
     });
   } catch (error) {

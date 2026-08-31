@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { ensureUser } from "@/lib/ensureUser";
 
 export async function GET(
   _request: Request,
@@ -11,10 +12,15 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
+  }
+
   const contact = await prisma.contact.findFirst({
     where: {
       id: params.id,
-      userId: session.user.id,
+      userId: dbUserId,
     },
   });
 
@@ -34,10 +40,15 @@ export async function DELETE(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
+  }
+
   const contact = await prisma.contact.findFirst({
     where: {
       id: params.id,
-      userId: session.user.id,
+      userId: dbUserId,
     },
   });
 

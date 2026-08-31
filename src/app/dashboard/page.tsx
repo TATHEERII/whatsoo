@@ -1,6 +1,7 @@
 ﻿import Link from "next/link";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
+import { ensureUser } from "@/lib/ensureUser";
 import {
   Send,
   Users,
@@ -14,7 +15,14 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const session = await auth();
-  const userId = session?.user?.id;
+  if (!session?.user?.id) {
+    return null;
+  }
+
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return null;
+  }
 
   const [
     activeCampaigns,
@@ -24,15 +32,15 @@ export default async function DashboardPage() {
   ] = await Promise.all([
     prisma.campaign.count({
       where: {
-        userId: userId!,
+        userId: dbUserId,
         status: { in: ["running", "paused", "scheduled"] },
       },
     }),
-    prisma.contact.count({ where: { userId: userId! } }),
+    prisma.contact.count({ where: { userId: dbUserId } }),
     prisma.campaignLog.count({
-      where: { campaign: { userId: userId! }, status: "sent" },
+      where: { campaign: { userId: dbUserId }, status: "sent" },
     }),
-    prisma.campaignLog.count({ where: { campaign: { userId: userId! } } }),
+    prisma.campaignLog.count({ where: { campaign: { userId: dbUserId } } }),
   ]);
 
   const deliveryRate =

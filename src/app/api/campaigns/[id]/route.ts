@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { ensureUser } from "@/lib/ensureUser";
 
 export async function GET(
   request: Request,
@@ -11,10 +12,15 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
+  }
+
   const campaign = await prisma.campaign.findFirst({
     where: {
       id: params.id,
-      userId: session.user.id,
+      userId: dbUserId,
     },
     include: {
       contactList: {
@@ -27,17 +33,19 @@ export async function GET(
     return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
   }
 
-  const [totalLogs, sentLogs, failedLogs] = await Promise.all([
-    prisma.campaignLog.count({
-      where: { campaignId: params.id },
-    }),
-    prisma.campaignLog.count({
-      where: { campaignId: params.id, status: "sent" },
-    }),
-    prisma.campaignLog.count({
-      where: { campaignId: params.id, status: "failed" },
-    }),
-  ]);
+  const statusCounts = await prisma.campaignLog.groupBy({
+    by: ["status"],
+    where: { campaignId: params.id },
+    _count: { _all: true },
+  });
+
+  const countMap = new Map(statusCounts.map((s) => [s.status, s._count._all]));
+  const totalLogs = statusCounts.reduce(
+    (sum, s) => sum + s._count._all,
+    0
+  );
+  const sentLogs = countMap.get("sent") ?? 0;
+  const failedLogs = countMap.get("failed") ?? 0;
 
   const successRate =
     totalLogs > 0 ? ((sentLogs / totalLogs) * 100).toFixed(1) : "0.0";

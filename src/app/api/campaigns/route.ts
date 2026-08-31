@@ -1,6 +1,7 @@
 ﻿import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { ensureUser } from "@/lib/ensureUser";
 
 export async function GET() {
   const session = await auth();
@@ -8,8 +9,13 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
+  }
+
   const campaigns = await prisma.campaign.findMany({
-    where: { userId: session.user.id },
+    where: { userId: dbUserId },
     include: {
       contactList: {
         select: { name: true },
@@ -57,35 +63,40 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
   }
 
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
+  }
+
   if (contactListId) {
     const contactList = await prisma.contactList.findFirst({
-      where: { id: contactListId, userId: session.user.id },
+      where: { id: contactListId, userId: dbUserId },
     });
     if (!contactList) {
       return NextResponse.json({ error: "Contact list not found" }, { status: 404 });
     }
   }
 
-    const campaign = await prisma.campaign.create({
-      data: {
-        name: name.trim(),
-        description: description?.trim() || null,
-        message: message?.trim() || null,
-        templateId: templateId || null,
-        templateName: templateName?.trim() || null,
-        contactListId: contactListId || null,
-        scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
-        delayType: delayType ?? "fixed",
-        delayValue: delayValue ? Number(delayValue) : 5000,
-        maxAttempts: maxAttempts ? Number(maxAttempts) : 3,
-        userId: session.user.id,
+  const campaign = await prisma.campaign.create({
+    data: {
+      name: name.trim(),
+      description: description?.trim() || null,
+      message: message?.trim() || null,
+      templateId: templateId || null,
+      templateName: templateName?.trim() || null,
+      contactListId: contactListId || null,
+      scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+      delayType: delayType ?? "fixed",
+      delayValue: delayValue ? Number(delayValue) : 5000,
+      maxAttempts: maxAttempts ? Number(maxAttempts) : 3,
+      userId: dbUserId,
+    },
+    include: {
+      contactList: {
+        select: { name: true },
       },
-      include: {
-        contactList: {
-          select: { name: true },
-        },
-      },
-    });
+    },
+  });
 
   return NextResponse.json(
     {

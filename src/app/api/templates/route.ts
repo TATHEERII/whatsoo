@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { ensureUser } from "@/lib/ensureUser";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +11,13 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
+  }
+
   const templates = await prisma.template.findMany({
-    where: { userId: session.user.id },
+    where: { userId: dbUserId },
     orderBy: { createdAt: "desc" },
   });
 
@@ -34,11 +40,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Template body is required" }, { status: 400 });
   }
 
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
+  }
+
   const template = await prisma.template.create({
     data: {
       name: name.trim(),
       body: content,
-      userId: session.user.id,
+      userId: dbUserId,
     },
   });
 

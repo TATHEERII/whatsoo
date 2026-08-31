@@ -1,6 +1,7 @@
 import { auth } from "@/auth";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { ensureUser } from "@/lib/ensureUser";
 
 export async function GET() {
   const session = await auth();
@@ -8,8 +9,13 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
+  }
+
   const contactLists = await prisma.contactList.findMany({
-    where: { userId: session.user.id },
+    where: { userId: dbUserId },
     include: {
       _count: {
         select: { contacts: true },
@@ -43,11 +49,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
   }
 
+  const dbUserId = await ensureUser(session?.user);
+  if (!dbUserId) {
+    return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
+  }
+
   const contactList = await prisma.contactList.create({
     data: {
       name: name.trim(),
       description: description?.trim() || null,
-      userId: session.user.id,
+      userId: dbUserId,
     },
     include: {
       _count: {
