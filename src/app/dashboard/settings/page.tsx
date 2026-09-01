@@ -61,12 +61,7 @@ export default function SettingsPage() {
   useEffect(() => {
     const shouldPoll = status?.ready !== true && !connecting;
     if (shouldPoll) {
-      if (!pollRef.current) {
-        pollRef.current = setInterval(fetchStatus, 2500);
-      }
-    } else if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
+      pollRef.current = setInterval(fetchStatus, 2500);
     }
     return () => {
       if (pollRef.current) {
@@ -74,7 +69,7 @@ export default function SettingsPage() {
         pollRef.current = null;
       }
     };
-  }, [status, connecting, fetchStatus]);
+  }, [connecting, fetchStatus, status?.ready]);
 
   const handleConnect = async () => {
     setConnecting(true);
