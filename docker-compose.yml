@@ -1,0 +1,18 @@
+services:
+  engine:
+    build: ./whatsapp-engine
+    container_name: whatso-whatsapp-engine
+    restart: unless-stopped
+    ports:
+      - "${ENGINE_PORT:-3001}:3001"
+    environment:
+      PORT: "3001"
+      ENGINE_TOKEN: "${ENGINE_TOKEN:?ENGINE_TOKEN must be set}"
+      SESSION_DIR: "/data/wwebjs_auth"
+      PUPPETEER_EXECUTABLE_PATH: "/usr/bin/chromium"
+      PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: "true"
+    volumes:
+      - engine-data:/data
+
+volumes:
+  engine-data:

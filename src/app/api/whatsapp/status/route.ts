@@ -1,6 +1,6 @@
-import { auth } from "@/auth";
+﻿import { auth } from "@/auth";
 import { NextResponse } from "next/server";
-import { getWhatsAppEngine } from "@/lib/whatsapp/engine";
+import { getEngineClient, EngineClientError } from "@/lib/whatsapp/engine-client";
 import QRCode from "qrcode";
 
 export const dynamic = "force-dynamic";
@@ -10,17 +10,9 @@ export async function GET() {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-
   try {
-    const engine = getWhatsAppEngine();
-
-    const status = await engine.getStatus();
-
-    // Debug logging - remove after fixing
-    if (status.ready) {
-      console.log("[WhatsApp Status] Client info:", engine.debugClientInfo());
-    }
-
+    const engine = getEngineClient();
+    const status = await engine.status();
     let qrImage: string | null = null;
     if (status.qr) {
       try {
@@ -29,14 +21,24 @@ export async function GET() {
         qrImage = null;
       }
     }
-
     return NextResponse.json({
       ready: status.ready,
       state: status.state,
       qr: qrImage,
       phoneNumber: status.phoneNumber,
     });
-  } catch {
-    return NextResponse.json({ ready: false, state: "UNLAUNCHED", qr: null, phoneNumber: null });
+  } catch (error) {
+    if (error instanceof EngineClientError && !error.status) {
+      return NextResponse.json({
+        ready: false,
+        state: "UNLAUNCHED",
+        qr: null,
+        phoneNumber: null,
+      });
+    }
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to get WhatsApp status" },
+      { status: 502 }
+    );
   }
 }

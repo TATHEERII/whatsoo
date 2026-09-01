@@ -1,5 +1,5 @@
-import prisma from "@/lib/prisma";
-import { getWhatsAppEngine } from "@/lib/whatsapp/engine";
+﻿import prisma from "@/lib/prisma";
+import { getEngineClient } from "@/lib/whatsapp/engine-client";
 
 export type DelayType = "fixed" | "random" | "progressive";
 
@@ -158,7 +158,7 @@ class SqliteQueueService {
 
     if (locked.count === 0) return;
 
-    const engine = getWhatsAppEngine();
+    const engine = getEngineClient();
 
     try {
       const campaign = await prisma.campaign.findUnique({
@@ -183,7 +183,7 @@ class SqliteQueueService {
         campaign.description ||
         campaign.name;
 
-      await engine.sendText(job.recipient, messageContent);
+      await engine.send({ to: job.recipient, text: messageContent });
 
       await prisma.jobQueue.update({
         where: { id: job.id },

@@ -1,6 +1,6 @@
-import { auth } from "@/auth";
+﻿import { auth } from "@/auth";
 import { NextResponse } from "next/server";
-import { getWhatsAppEngine } from "@/lib/whatsapp/engine";
+import { getEngineClient } from "@/lib/whatsapp/engine-client";
 
 export const dynamic = "force-dynamic";
 
@@ -9,13 +9,21 @@ export async function POST() {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-
   try {
-    const engine = getWhatsAppEngine();
-    await engine.initialize();
-    return NextResponse.json({ success: true, message: "Initializing WhatsApp…" });
+    const engine = getEngineClient();
+    const result = await engine.connect();
+    return NextResponse.json({
+      success: true,
+      message: result.message ?? "Initializing WhatsApp…",
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to initialize WhatsApp";
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    const message =
+      error instanceof Error ? error.message : "Failed to start WhatsApp";
+    const status = (error as { status?: number }).status ?? 502;
+    const finalStatus = status >= 400 && status < 600 && status !== 502 ? status : 502;
+    return NextResponse.json(
+      { success: false, error: message },
+      { status: finalStatus }
+    );
   }
 }
