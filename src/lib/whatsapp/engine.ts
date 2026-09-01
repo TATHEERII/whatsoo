@@ -129,6 +129,21 @@ class WhatsAppEngine {
     return this.wapi;
   }
 
+  private async ensureSessionDir(): Promise<string> {
+    const baseDir = path.resolve(process.cwd(), ".wwebjs_auth");
+    const sessionDir = path.join(baseDir, "session");
+
+    try {
+      fs.mkdirSync(sessionDir, { recursive: true });
+      return baseDir;
+    } catch {
+      const fallbackDir = path.resolve("/tmp", ".wwebjs_auth");
+      const fallbackSessionDir = path.join(fallbackDir, "session");
+      fs.mkdirSync(fallbackSessionDir, { recursive: true });
+      return fallbackDir;
+    }
+  }
+
    async initialize(puppeteerOptions?: object): Promise<void> {
     // If already initialized and ready, nothing to do
     if (this.client && this.ready) {
@@ -171,9 +186,11 @@ class WhatsAppEngine {
         ],
       };
 
+      const dataPath = await this.ensureSessionDir();
+
       this.client = new lib.Client({
         authStrategy: new lib.LocalAuth({
-          dataPath: path.resolve(process.cwd(), ".wwebjs_auth"),
+          dataPath: dataPath,
         }),
         puppeteer: puppeteerOptions ?? defaultPuppeteerOptions,
       });
@@ -357,9 +374,24 @@ class WhatsAppEngine {
     }
   }
 
+  private getSessionDir(): string {
+    const baseDir = path.resolve(process.cwd(), ".wwebjs_auth");
+    const sessionDir = path.join(baseDir, "session");
+    if (fs.existsSync(sessionDir)) {
+      return baseDir;
+    }
+    const fallbackDir = path.resolve("/tmp", ".wwebjs_auth");
+    const fallbackSessionDir = path.join(fallbackDir, "session");
+    if (fs.existsSync(fallbackSessionDir)) {
+      return fallbackDir;
+    }
+    return baseDir;
+  }
+
   sessionExists(): boolean {
     try {
-      return fs.existsSync(SESSION_DIR);
+      const baseDir = this.getSessionDir();
+      return fs.existsSync(path.join(baseDir, "session"));
     } catch {
       return false;
     }
@@ -498,10 +530,9 @@ class WhatsAppEngine {
    * requires scanning a new QR code.
    */
   private async clearSession(): Promise<void> {
-    const sessionPath = path.resolve(process.cwd(), ".wwebjs_auth");
+    const sessionPath = this.getSessionDir();
     try {
       if (fs.existsSync(sessionPath)) {
-        // Recursively remove the session directory
         fs.rmSync(sessionPath, { recursive: true, force: true });
         console.log("[WhatsApp] Session cleared successfully");
       }
