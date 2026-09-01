@@ -16,6 +16,7 @@
         "@libsql/client": "^0.17.4",
         "@prisma/adapter-libsql": "^7.10.0",
         "@prisma/client": "^7.10.0",
+        "@sparticuz/chromium": "^149.0.0",
         "bcryptjs": "^3.0.3",
         "csv-parse": "^7.0.2",
         "csv-writer": "^1.6.0",

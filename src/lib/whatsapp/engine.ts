@@ -142,20 +142,44 @@ class WhatsAppEngine {
     }
   }
 
+  private async getExecutablePath(): Promise<string | undefined> {
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      return process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    try {
+      const mod = await import("@sparticuz/chromium");
+      const chromium = mod.default;
+      const executablePath = await chromium.executablePath();
+      if (executablePath) {
+        return executablePath;
+      }
+    } catch {
+      // @sparticuz/chromium is not installed (local dev)
+    }
+
+    return undefined;
+  }
+
+  private async getServerlessArgs(): Promise<string[]> {
+    try {
+      const mod = await import("@sparticuz/chromium");
+      const chromium = mod.default;
+      return chromium.args || [];
+    } catch {
+      return [];
+    }
+  }
+
    async initialize(puppeteerOptions?: object): Promise<void> {
-    // If already initialized and ready, nothing to do
     if (this.client && this.ready) {
       return;
     }
 
-    // If a previous initialization is in progress, wait for it
     if (this.initPromise) {
       return this.initPromise;
     }
 
-    // If client exists but is not ready (broken/stale state), destroy it
-    // and start fresh. This handles cases where the WhatsApp client was
-    // created but the underlying browser session is no longer valid.
     if (this.client && !this.ready) {
       try {
         await this.client.destroy();
@@ -166,22 +190,26 @@ class WhatsAppEngine {
       this.lastQr = null;
     }
 
-    // Reset state for new connection attempt
     this.ready = false;
     this.lastQr = null;
 
     this.initPromise = (async () => {
       const lib = await this.loadLib();
 
+      const executablePath = await this.getExecutablePath();
+      const serverlessArgs = await this.getServerlessArgs();
+
       const defaultPuppeteerOptions = {
         headless: true,
         args: [
+          ...serverlessArgs,
           "--no-sandbox",
           "--disable-setuid-sandbox",
           "--disable-dev-shm-usage",
           "--disable-gpu",
           "--disable-extensions",
         ],
+        ...(executablePath ? { executablePath } : {}),
       };
 
       const dataPath = await this.ensureSessionDir();
