@@ -20,6 +20,7 @@ interface WsStatus {
   state: string;
   qr: string | null;
   phoneNumber: string | null;
+  error: string | null;
 }
 
 export default function SettingsPage() {
@@ -211,6 +212,13 @@ export default function SettingsPage() {
         {error && (
           <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
             {error}
+          </div>
+        )}
+
+        {status?.error && (
+          <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
+            <div className="font-medium">Engine error</div>
+            <div className="mt-1 break-words text-amber-200/80">{status.error}</div>
           </div>
         )}
 

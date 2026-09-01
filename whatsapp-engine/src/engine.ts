@@ -96,6 +96,7 @@ export class WhatsAppEngine extends EventEmitter {
   private client: Client | null = null;
   private ready = false;
   private lastQr: string | null = null;
+  private lastError: string | null = null;
   private obfuscationOptions: Required<ObfuscationOptions>;
   private wapi: typeof import("whatsapp-web.js") | null = null;
   private initPromise: Promise<void> | null = null;
@@ -147,6 +148,7 @@ export class WhatsAppEngine extends EventEmitter {
 
     this.ready = false;
     this.lastQr = null;
+    this.lastError = null;
 
     this.initPromise = (async () => {
       const lib = await this.loadLib();
@@ -201,6 +203,9 @@ export class WhatsAppEngine extends EventEmitter {
       try {
         await this.client.initialize();
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.lastError = message;
+        console.error("[engine] initialize failed:", message);
         try {
           await this.client?.destroy();
         } catch {
@@ -239,9 +244,13 @@ export class WhatsAppEngine extends EventEmitter {
     ready: boolean;
     qr: string | null;
     phoneNumber: string | null;
+    error: string | null;
   }> {
     if (!this.client) {
-      return { state: "UNLAUNCHED", ready: false, qr: this.lastQr, phoneNumber: null };
+      if (this.lastError) {
+        return { state: "UNLAUNCHED", ready: false, qr: null, phoneNumber: null, error: this.lastError };
+      }
+      return { state: "UNLAUNCHED", ready: false, qr: null, phoneNumber: null, error: null };
     }
 
     let state = "UNKNOWN";
@@ -263,6 +272,7 @@ export class WhatsAppEngine extends EventEmitter {
       ready: isReady,
       qr,
       phoneNumber: isReady ? await this.getPhoneNumber() : null,
+      error: this.lastError,
     };
   }
 

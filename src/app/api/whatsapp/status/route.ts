@@ -21,11 +21,12 @@ export async function GET() {
         qrImage = null;
       }
     }
-    return NextResponse.json({
+return NextResponse.json({
       ready: status.ready,
       state: status.state,
       qr: qrImage,
       phoneNumber: status.phoneNumber,
+      error: status.error ?? null,
     });
   } catch (error) {
     if (error instanceof EngineClientError && !error.status) {
@@ -34,6 +35,7 @@ export async function GET() {
         state: "UNLAUNCHED",
         qr: null,
         phoneNumber: null,
+        error: null,
       });
     }
     return NextResponse.json(

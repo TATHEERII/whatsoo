@@ -27,7 +27,13 @@ function authMiddleware(req, res, next) {
     }
     next();
 }
-app.use(authMiddleware);
+app.use((req, res, next) => {
+    if (req.path === "/health") {
+        next();
+        return;
+    }
+    authMiddleware(req, res, next);
+});
 const engine = new engine_1.WhatsAppEngine();
 engine.on("qr", (qr) => {
     console.log(`[engine] event: qr (${qr.length} chars)`);

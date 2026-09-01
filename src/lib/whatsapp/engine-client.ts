@@ -3,6 +3,7 @@
   state: string;
   qr: string | null;
   phoneNumber: string | null;
+  error: string | null;
 }
 
 export interface SendPayload {

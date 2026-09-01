@@ -108,6 +108,7 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
     client = null;
     ready = false;
     lastQr = null;
+    lastError = null;
     obfuscationOptions;
     wapi = null;
     initPromise = null;
@@ -152,6 +153,7 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
         }
         this.ready = false;
         this.lastQr = null;
+        this.lastError = null;
         this.initPromise = (async () => {
             const lib = await this.loadLib();
             const defaultPuppeteerOptions = {
@@ -197,6 +199,9 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
                 await this.client.initialize();
             }
             catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                this.lastError = message;
+                console.error("[engine] initialize failed:", message);
                 try {
                     await this.client?.destroy();
                 }
@@ -228,7 +233,10 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
     }
     async getStatus() {
         if (!this.client) {
-            return { state: "UNLAUNCHED", ready: false, qr: this.lastQr, phoneNumber: null };
+            if (this.lastError) {
+                return { state: "UNLAUNCHED", ready: false, qr: null, phoneNumber: null, error: this.lastError };
+            }
+            return { state: "UNLAUNCHED", ready: false, qr: null, phoneNumber: null, error: null };
         }
         let state = "UNKNOWN";
         try {
@@ -249,6 +257,7 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
             ready: isReady,
             qr,
             phoneNumber: isReady ? await this.getPhoneNumber() : null,
+            error: this.lastError,
         };
     }
     async getPhoneNumber() {
