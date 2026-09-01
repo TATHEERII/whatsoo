@@ -42,3 +42,4 @@ dev.db
 
 # whatsapp-web.js auth
 .wwebjs_auth/
+.wwebjs_cache/

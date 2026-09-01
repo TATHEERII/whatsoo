@@ -9,6 +9,7 @@ import {
   Settings,
   LogOut,
 } from "lucide-react";
+import { redirect } from "next/navigation";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -43,9 +44,13 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }>) {
   const session = await auth();
-  const user = session?.user;
-  const name = user?.name ?? "User";
-  const email = user?.email ?? "";
+  if (!session?.user) {
+    redirect("/auth/login");
+  }
+
+  const user = session.user;
+  const name = user.name ?? "User";
+  const email = user.email ?? "";
 
   return (
     <div className="flex min-h-screen bg-neutral-950 text-neutral-100">
