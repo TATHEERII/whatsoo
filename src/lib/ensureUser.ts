@@ -57,9 +57,10 @@ export async function ensureUser(
     console.error("ENSURE_USER_ERROR:", err?.message ?? String(e), "code:", err?.code);
     try {
       const byEmail = await prisma.user.findUnique({ where: { email } });
-      return byEmail?.id ?? null;
+      if (byEmail) return byEmail.id;
     } catch {
-      return null;
+      // ignored
     }
+    return null;
   }
 }
