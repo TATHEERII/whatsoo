@@ -2,8 +2,6 @@ import type { Client, MessageSendOptions } from "whatsapp-web.js";
 import fs from "fs";
 import path from "path";
 
-const SESSION_DIR = path.resolve(process.cwd(), ".wwebjs_auth", "session");
-
 export interface ObfuscationOptions {
   enabled?: boolean;
   dotReplaceRatio?: number;
