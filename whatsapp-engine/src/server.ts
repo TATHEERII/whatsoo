@@ -30,7 +30,13 @@ function authMiddleware(
   next();
 }
 
-app.use(authMiddleware);
+app.use((req, res, next) => {
+  if (req.path === "/health") {
+    next();
+    return;
+  }
+  authMiddleware(req, res, next);
+});
 
 const engine = new WhatsAppEngine();
 
