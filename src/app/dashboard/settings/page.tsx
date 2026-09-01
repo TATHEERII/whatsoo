@@ -30,6 +30,7 @@ export default function SettingsPage() {
   const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fetchingRef = useRef(false);
 
   const handleSignOut = async () => {
     setSigningOut(true);
@@ -42,6 +43,8 @@ export default function SettingsPage() {
   };
 
   const fetchStatus = useCallback(async () => {
+    if (fetchingRef.current) return;
+    fetchingRef.current = true;
     try {
       const res = await fetch("/api/whatsapp/status");
       if (res.ok) {
@@ -52,6 +55,8 @@ export default function SettingsPage() {
       }
     } catch {
       /* ignore transient errors */
+    } finally {
+      fetchingRef.current = false;
     }
   }, []);
 

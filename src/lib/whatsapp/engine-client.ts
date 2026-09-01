@@ -38,13 +38,15 @@ export class WhatsAppEngineClient {
   }
 
   async status(): Promise<EngineStatus> {
-    return this.request<EngineStatus>("/status", "GET");
+    return this.request<EngineStatus>("/status", "GET", undefined, 3000);
   }
 
   async connect(): Promise<{ success: boolean; message?: string }> {
     return this.request<{ success: boolean; message?: string }>(
       "/connect",
-      "POST"
+      "POST",
+      undefined,
+      30000
     );
   }
 
@@ -65,7 +67,8 @@ export class WhatsAppEngineClient {
   private async request<T>(
     path: string,
     method: "GET" | "POST",
-    body?: unknown
+    body?: unknown,
+    timeoutMs = 10000
   ): Promise<T> {
     let res: Response;
     try {
@@ -76,7 +79,7 @@ export class WhatsAppEngineClient {
           ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
         },
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (err) {
       throw new EngineClientError(
