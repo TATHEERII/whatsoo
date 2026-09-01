@@ -28,7 +28,6 @@ RUN npm install --omit=dev --no-audit --no-fund
 COPY --from=build /app/dist ./dist
 
 RUN mkdir -p /data/wwebjs_auth
-VOLUME ["/data"]
 EXPOSE 3001
 
 CMD ["node", "dist/server.js"]
