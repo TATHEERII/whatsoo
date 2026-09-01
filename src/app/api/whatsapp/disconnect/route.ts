@@ -12,7 +12,8 @@ export async function POST() {
 
   try {
     const engine = getWhatsAppEngine();
-    await engine.disconnect();
+    // Clear session on explicit disconnect so next connect shows QR code
+    await engine.disconnect(true);
     return NextResponse.json({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to disconnect";

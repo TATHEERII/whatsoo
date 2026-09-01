@@ -14,13 +14,12 @@ export async function GET() {
   try {
     const engine = getWhatsAppEngine();
 
-    // Auto-restore a saved session in the background so navigating back to
-    // Settings (or a server restart) reconnects without re-scanning the QR.
-    if (engine.sessionExists() && !(await engine.getStatus()).ready) {
-      engine.initialize().catch(() => {});
-    }
-
     const status = await engine.getStatus();
+
+    // Debug logging - remove after fixing
+    if (status.ready) {
+      console.log("[WhatsApp Status] Client info:", engine.debugClientInfo());
+    }
 
     let qrImage: string | null = null;
     if (status.qr) {

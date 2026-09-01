@@ -49,7 +49,7 @@ export async function POST(
     }
 
     const createdContacts = [];
-    const skipped: string[] = [];
+    const skipped: { phone: string; reason: string }[] = [];
 
     const lowerRecord = (rec: Record<string, string>): Record<string, string> => {
       const out: Record<string, string> = {};
@@ -68,9 +68,10 @@ export async function POST(
 
       const trimmedPhone = phoneNumber?.trim() || "";
       const trimmedName = name?.trim() || "";
+      const trimmedEmail = email?.trim() || "";
 
       if (!trimmedPhone) {
-        skipped.push("no phone");
+        skipped.push({ phone: trimmedName || "unknown", reason: "Missing phone number" });
         continue;
       }
 
@@ -81,7 +82,7 @@ export async function POST(
           data: {
             name: finalName,
             phoneNumber: trimmedPhone || null,
-            email: email?.trim() || null,
+            email: trimmedEmail || null,
             userId: dbUserId,
             contactListId: contactList.id,
           },
@@ -89,9 +90,14 @@ export async function POST(
 
         createdContacts.push(contact);
       } catch (e) {
-        const err = e as { code?: string };
+        const err = e as { code?: string; meta?: { target?: string[] } };
         if (err?.code === "P2002") {
-          skipped.push(trimmedPhone);
+          const target = err?.meta?.target as string[] | undefined;
+          if (target?.includes("email")) {
+            skipped.push({ phone: trimmedPhone, reason: `Duplicate email: ${trimmedEmail}` });
+          } else {
+            skipped.push({ phone: trimmedPhone, reason: "Phone number already exists" });
+          }
         } else {
           throw e;
         }

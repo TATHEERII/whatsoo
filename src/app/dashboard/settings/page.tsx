@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
+import { signOut } from "next-auth/react";
 import {
   ArrowLeft,
   Smartphone,
@@ -11,6 +12,7 @@ import {
   Loader2,
   AlertCircle,
   Phone,
+  LogOut,
 } from "lucide-react";
 
 interface WsStatus {
@@ -24,14 +26,26 @@ export default function SettingsPage() {
   const [status, setStatus] = useState<WsStatus | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await signOut({ callbackUrl: "/auth/login" });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Sign out failed");
+      setSigningOut(false);
+    }
+  };
 
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/whatsapp/status");
       if (res.ok) {
         const data = (await res.json()) as WsStatus;
+        console.log("[Settings] Status fetched:", { ready: data.ready, hasQr: !!data.qr, state: data.state, phoneNumber: data.phoneNumber });
         setStatus(data);
         setError(null);
       }
@@ -91,7 +105,7 @@ export default function SettingsPage() {
     }
   };
 
-  const connected = status?.ready === true;
+  const connected = status?.ready === true && !status?.qr;
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
@@ -218,6 +232,33 @@ export default function SettingsPage() {
             </p>
           </div>
         )}
+      </section>
+
+      <section className="mt-6 rounded-2xl border border-neutral-800 bg-neutral-900 p-6">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-neutral-800 text-neutral-300">
+            <LogOut className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-neutral-100">Account</h2>
+            <p className="text-xs text-neutral-500">
+              Sign out to connect a different Google account and link a new WhatsApp number.
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={handleSignOut}
+          disabled={signingOut}
+          className="flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-800/50 px-4 py-2 text-sm font-medium text-neutral-200 transition-colors hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
+        >
+          {signingOut ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <LogOut className="h-4 w-4" />
+          )}
+          {signingOut ? "Signing out…" : "Sign out"}
+        </button>
       </section>
     </div>
   );

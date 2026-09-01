@@ -37,7 +37,7 @@ export default function ContactsPage() {
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [csvPreview, setCsvPreview] = useState<ContactPreview[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [importResult, setImportResult] = useState<{ imported: number } | null>(null);
+  const [importResult, setImportResult] = useState<{ imported: number; skipped: { phone: string; reason: string }[] } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchLists = useCallback(async () => {
@@ -154,7 +154,7 @@ export default function ContactsPage() {
 
       if (res.ok) {
         const data = await res.json();
-        setImportResult({ imported: data.imported });
+        setImportResult({ imported: data.imported, skipped: data.skipped || [] });
         fetchLists();
       }
     } catch (error) {
@@ -396,10 +396,22 @@ export default function ContactsPage() {
                       Click to upload a CSV file
                     </p>
                     <p className="text-xs text-neutral-600">
-                      Columns: name, phoneNumber, email
+                      Columns: name, phone, email
                     </p>
                   </div>
                 )}
+              </div>
+
+              <div className="rounded-xl border border-neutral-800 bg-neutral-950/50 p-4">
+                <p className="text-xs font-medium text-neutral-400 mb-2">Expected CSV Format:</p>
+                <div className="rounded-lg bg-neutral-900 p-3 font-mono text-xs text-neutral-300 overflow-x-auto">
+                  <p className="text-amber-400">name,phone,email</p>
+                  <p>John Doe,+1234567890,john@example.com</p>
+                  <p>Jane Smith,+0987654321,jane@example.com</p>
+                </div>
+                <p className="mt-2 text-xs text-neutral-500">
+                  Phone number is required. Name and email are optional.
+                </p>
               </div>
 
               {csvPreview.length > 0 && (
@@ -439,8 +451,37 @@ export default function ContactsPage() {
               )}
 
               {importResult && (
-                <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
-                  Successfully imported {importResult.imported} contacts.
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
+                    Successfully imported {importResult.imported} contacts.
+                  </div>
+                  {importResult.skipped.length > 0 && (
+                    <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 overflow-hidden">
+                      <div className="border-b border-amber-500/20 px-4 py-2">
+                        <p className="text-xs font-medium text-amber-400">
+                          Skipped {importResult.skipped.length} contacts
+                        </p>
+                      </div>
+                      <div className="max-h-32 overflow-y-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead>
+                            <tr className="border-b border-amber-500/20 text-amber-400/70">
+                              <th className="px-4 py-2 font-medium">Phone</th>
+                              <th className="px-4 py-2 font-medium">Reason</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {importResult.skipped.map((item, idx) => (
+                              <tr key={idx} className="border-b border-amber-500/10 last:border-0">
+                                <td className="px-4 py-2 text-neutral-300">{item.phone}</td>
+                                <td className="px-4 py-2 text-neutral-400">{item.reason}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

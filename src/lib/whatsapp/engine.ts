@@ -129,13 +129,33 @@ class WhatsAppEngine {
     return this.wapi;
   }
 
-  async initialize(puppeteerOptions?: object): Promise<void> {
-    if (this.client) {
+   async initialize(puppeteerOptions?: object): Promise<void> {
+    // If already initialized and ready, nothing to do
+    if (this.client && this.ready) {
       return;
     }
+
+    // If a previous initialization is in progress, wait for it
     if (this.initPromise) {
       return this.initPromise;
     }
+
+    // If client exists but is not ready (broken/stale state), destroy it
+    // and start fresh. This handles cases where the WhatsApp client was
+    // created but the underlying browser session is no longer valid.
+    if (this.client && !this.ready) {
+      try {
+        await this.client.destroy();
+      } catch {
+        /* ignore */
+      }
+      this.client = null;
+      this.lastQr = null;
+    }
+
+    // Reset state for new connection attempt
+    this.ready = false;
+    this.lastQr = null;
 
     this.initPromise = (async () => {
       const lib = await this.loadLib();
@@ -245,15 +265,22 @@ class WhatsAppEngine {
       }
     }
 
+    // Use a single snapshot of ready state to avoid race conditions
+    const isReady = this.ready;
+    const qr = isReady ? null : this.lastQr;
+
+    // Debug logging
+    console.log(`[WhatsApp getStatus] state=${state}, isReady=${isReady}, hasQr=${!!qr}, lastQr=${!!this.lastQr}`);
+
     return {
       state,
-      ready: this.ready,
-      qr: this.ready ? null : this.lastQr,
-      phoneNumber: this.ready ? this.getPhoneNumber() : null,
+      ready: isReady,
+      qr,
+      phoneNumber: isReady ? await this.getPhoneNumber() : null,
     };
   }
 
-  getPhoneNumber(): string | null {
+  async getPhoneNumber(): Promise<string | null> {
     if (!this.client) return null;
     try {
       const info = this.client.info;
@@ -262,17 +289,71 @@ class WhatsAppEngine {
       const wid = info.wid || info.me;
       if (!wid) return null;
 
-      if (wid.server === 's.whatsapp.net' && wid.user) {
-        return wid.user;
+      // Extract phone number from wid.user if it looks like a phone number
+      if (wid.user) {
+        // Check if it's a phone number (numeric, possibly with + prefix)
+        const phoneMatch = wid.user.match(/^\+?\d+$/);
+        if (phoneMatch) {
+          return wid.user.replace(/^\+/, '');
+        }
       }
 
-      if (wid._serialized && wid._serialized.includes('@s.whatsapp.net')) {
-        return wid._serialized.split('@')[0];
+      // Fallback: parse from _serialized (format: "phone@server")
+      if (wid._serialized) {
+        const atIndex = wid._serialized.indexOf('@');
+        if (atIndex > 0) {
+          const phonePart = wid._serialized.substring(0, atIndex);
+          // Verify it looks like a phone number
+          const phoneMatch = phonePart.match(/^\+?\d+$/);
+          if (phoneMatch) {
+            return phonePart.replace(/^\+/, '');
+          }
+        }
+      }
+
+      // Additional fallback: try to get formatted number from the client
+      try {
+        const serialized = wid._serialized;
+        if (serialized) {
+          const formatted = await this.client.getFormattedNumber(serialized);
+          if (formatted) {
+            // Extract digits from formatted number
+            const digits = formatted.replace(/\D/g, '');
+            if (digits.length >= 10) {
+              return digits;
+            }
+          }
+        }
+      } catch {
+        // Ignore errors from getFormattedNumber
       }
 
       return null;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Debug method to inspect client info for troubleshooting phone number extraction.
+   * Remove after fixing.
+   */
+  debugClientInfo(): Record<string, unknown> | null {
+    if (!this.client) return null;
+    try {
+      const info = this.client.info;
+      if (!info) return null;
+
+      const wid = info.wid || info.me;
+      return {
+        wid,
+        hasInfo: !!info,
+        pushname: info.pushname,
+        platform: info.platform,
+        phoneInfo: info.phone,
+      };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Unknown error' };
     }
   }
 
@@ -367,24 +448,66 @@ class WhatsAppEngine {
     }
   }
 
-  async disconnect(): Promise<void> {
+  async disconnect(clearSession: boolean = false): Promise<void> {
     const g = globalThis as unknown as { __whatsAppEngine?: WhatsAppEngine };
+
+    // Wait for any in-progress initialization to settle before disconnecting
+    if (this.initPromise) {
+      try {
+        await this.initPromise;
+      } catch {
+        /* initialization failed, proceed with cleanup */
+      }
+    }
+
     if (!this.client) {
       this.ready = false;
       this.lastQr = null;
       g.__whatsAppEngine = undefined;
-      return;
-    }
-    this.ready = false;
-    this.lastQr = null;
-    try {
-      await this.client.destroy();
-    } finally {
+    } else {
+      this.ready = false;
+      this.lastQr = null;
+      try {
+        await this.client.logout();
+        console.log("[WhatsApp] Logged out");
+      } catch (err) {
+        console.error("[WhatsApp] Logout failed:", err);
+      }
+
+      // Always destroy the client after disconnect so the next initialize()
+      // creates a fresh client. The old client may be in a logged-out or
+      // broken state that would prevent proper reconnection.
+      try {
+        await this.client.destroy();
+      } catch {
+        /* ignore */
+      }
       this.client = null;
       g.__whatsAppEngine = undefined;
     }
-    // NOTE: client.destroy() keeps the on-disk session (LocalAuth profile),
-    // so the next connect restores the WhatsApp session without re-scanning.
+
+    // When user explicitly disconnects, clear the on-disk session so the
+    // next connect shows a QR code to re-scan (force re-authentication).
+    if (clearSession) {
+      await this.clearSession();
+    }
+  }
+
+  /**
+   * Deletes the on-disk WhatsApp session directory so the next connect
+   * requires scanning a new QR code.
+   */
+  private async clearSession(): Promise<void> {
+    const sessionPath = path.resolve(process.cwd(), ".wwebjs_auth");
+    try {
+      if (fs.existsSync(sessionPath)) {
+        // Recursively remove the session directory
+        fs.rmSync(sessionPath, { recursive: true, force: true });
+        console.log("[WhatsApp] Session cleared successfully");
+      }
+    } catch (err) {
+      console.error("[WhatsApp] Failed to clear session:", err);
+    }
   }
 }
 
