@@ -98,6 +98,7 @@ export class WhatsAppEngine extends EventEmitter {
   private initializing = false;
   private lastQr: string | null = null;
   private lastError: string | null = null;
+  private lastState: string | null = null;
   private obfuscationOptions: Required<ObfuscationOptions>;
   private wapi: typeof import("whatsapp-web.js") | null = null;
   private initPromise: Promise<void> | null = null;
@@ -196,7 +197,6 @@ export class WhatsAppEngine extends EventEmitter {
       });
 
       // Track connection state for debugging and monitoring
-      let lastConnectionState: string | null = null;
 
       this.client.on("qr", (qr: string) => {
         this.ready = false;
@@ -247,9 +247,9 @@ export class WhatsAppEngine extends EventEmitter {
       // Monitor connection state changes for debugging
       this.client.on("change_state", (state: any) => {
         const stateStr = typeof state === "string" ? state : String(state);
-        if (lastConnectionState !== stateStr) {
-          console.log(`[engine] Connection state changed: ${lastConnectionState} -> ${stateStr}`);
-          lastConnectionState = stateStr;
+        if (this.lastState !== stateStr) {
+          console.log(`[engine] Connection state changed: ${this.lastState} -> ${stateStr}`);
+          this.lastState = stateStr;
         }
       });
 
@@ -324,10 +324,18 @@ export class WhatsAppEngine extends EventEmitter {
     }
 
     let state = "UNKNOWN";
-    try {
-      state = String(await this.client.getState());
-    } catch {
-      state = "UNKNOWN";
+    if (this.lastState) {
+      state = this.lastState;
+    } else {
+      try {
+        const withTimeout = Promise.race([
+          this.client.getState(),
+          new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+        ]);
+        state = String(await withTimeout);
+      } catch {
+        state = "UNKNOWN";
+      }
     }
 
     const isReady = this.ready;
@@ -595,3 +603,4 @@ export class WhatsAppEngine extends EventEmitter {
     }
   }
 }
+
