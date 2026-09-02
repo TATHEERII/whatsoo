@@ -298,6 +298,18 @@ export default function SettingsPage() {
           )}
         </div>
 
+        {connected && (
+          <div className="mt-4 flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-950/50 px-4 py-2.5">
+            <Phone className="h-4 w-4 text-neutral-500" />
+            <span className="text-sm text-neutral-400">Connected number:</span>
+            {status?.phoneNumber ? (
+              <span className="font-medium text-neutral-100">+{status.phoneNumber}</span>
+            ) : (
+              <Loader2 className="h-4 w-4 animate-spin text-neutral-500" />
+            )}
+          </div>
+        )}
+
         {showReconnectButton && !showErrorInBadge && (
           <div className="mt-4 flex items-center gap-3">
             <button

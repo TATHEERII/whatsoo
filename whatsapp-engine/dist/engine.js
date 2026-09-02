@@ -107,6 +107,7 @@ function obfuscateLine(line, options) {
 class WhatsAppEngine extends node_events_1.EventEmitter {
     client = null;
     ready = false;
+    initializing = false;
     lastQr = null;
     lastError = null;
     obfuscationOptions;
@@ -114,8 +115,8 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
     initPromise = null;
     reconnectAttempts = 0;
     reconnectTimer = null;
-    maxReconnectAttempts = 5;
-    reconnectDelayMs = 5000;
+    maxReconnectAttempts = 10;
+    reconnectDelayMs = 3000;
     constructor() {
         super();
         this.obfuscationOptions = { ...exports.defaultObfuscationOptions };
@@ -140,6 +141,10 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
         fs_1.default.mkdirSync(baseDir, { recursive: true });
         return baseDir;
     }
+    /** Returns true if an initialization attempt is currently in flight. */
+    isInitializing() {
+        return this.initializing;
+    }
     async initialize(puppeteerOptions) {
         if (this.client && this.ready) {
             return;
@@ -160,6 +165,7 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
         this.ready = false;
         this.lastQr = null;
         this.lastError = null;
+        this.initializing = true;
         this.initPromise = (async () => {
             const lib = await this.loadLib();
             const defaultPuppeteerOptions = {
@@ -170,6 +176,9 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
                     "--disable-extensions",
+                    "--disable-background-timer-throttling",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-renderer-backgrounding",
                 ],
             };
             if (process.env.PUPPETEER_EXECUTABLE_PATH) {
@@ -192,16 +201,22 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
                 this.emit("qr", qr);
                 console.log("[engine] QR code received, waiting for scan");
             });
+            this.client.on("authenticated", () => {
+                console.log("[engine] Client authenticated successfully");
+                this.emit("authenticated");
+            });
             this.client.on("ready", () => {
                 this.ready = true;
                 this.lastQr = null;
                 this.lastError = null;
+                this.initializing = false;
                 this.reconnectAttempts = 0; // Reset reconnect counter on successful connection
                 this.emit("ready");
                 console.log("[engine] Client is ready and connected");
             });
             this.client.on("disconnected", (reason) => {
                 this.ready = false;
+                this.initializing = false;
                 console.log(`[engine] Client disconnected: ${reason}`);
                 this.emit("disconnected", reason);
                 // Attempt auto-reconnect unless disconnect was intentional
@@ -212,9 +227,13 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
             });
             this.client.on("auth_failure", (msg) => {
                 this.ready = false;
+                this.initializing = false;
                 this.lastError = msg;
                 console.error(`[engine] Authentication failure: ${msg}`);
                 this.emit("auth_failure", msg);
+                this.clearSession().catch((err) => {
+                    console.error("[engine] Failed to clear session after auth failure:", err);
+                });
             });
             // Monitor connection state changes for debugging
             this.client.on("change_state", (state) => {
@@ -243,16 +262,18 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
                 try {
                     await this.client?.destroy();
                 }
-                catch {
-                    /* ignore */
+                catch (destroyErr) {
+                    console.error("[engine] Failed to destroy client after init error:", destroyErr);
                 }
                 this.client = null;
                 this.ready = false;
                 this.lastQr = null;
+                this.initializing = false;
                 throw err;
             }
             finally {
                 this.initPromise = null;
+                this.initializing = false;
             }
         })();
         return this.initPromise;
@@ -270,6 +291,9 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
         this.on("auth_failure", cb);
     }
     async getStatus() {
+        if (this.initializing || this.initPromise) {
+            return { state: "INITIALIZING", ready: false, qr: this.lastQr, phoneNumber: null, error: this.lastError };
+        }
         if (!this.client) {
             if (this.lastError) {
                 return { state: "UNLAUNCHED", ready: false, qr: null, phoneNumber: null, error: this.lastError };
@@ -281,12 +305,7 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
             state = String(await this.client.getState());
         }
         catch {
-            if (this.initPromise) {
-                state = "INITIALIZING";
-            }
-            else {
-                state = "UNKNOWN";
-            }
+            state = "UNKNOWN";
         }
         const isReady = this.ready;
         const qr = isReady ? null : this.lastQr;
@@ -460,7 +479,9 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
             return;
         }
         this.reconnectAttempts++;
-        const delay = this.reconnectDelayMs * this.reconnectAttempts;
+        const baseDelay = this.reconnectDelayMs * this.reconnectAttempts;
+        const jitter = Math.random() * 0.3 + 0.85;
+        const delay = Math.round(baseDelay * jitter);
         console.log(`[engine] Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms. Reason: ${reason}`);
         this.emit("reconnect_attempt", this.reconnectAttempts, this.maxReconnectAttempts, delay);
         this.reconnectTimer = setTimeout(() => {
@@ -477,6 +498,8 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
             this.reconnectTimer = null;
         }
         this.reconnectAttempts = 0;
+        this.initializing = false;
+        this.lastError = null;
         if (this.initPromise) {
             try {
                 await this.initPromise;
@@ -502,8 +525,8 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
             try {
                 await this.client.destroy();
             }
-            catch {
-                /* ignore */
+            catch (err) {
+                console.error("[engine] Destroy failed:", err);
             }
             this.client = null;
         }
