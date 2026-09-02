@@ -100,6 +100,10 @@ export class WhatsAppEngine extends EventEmitter {
   private obfuscationOptions: Required<ObfuscationOptions>;
   private wapi: typeof import("whatsapp-web.js") | null = null;
   private initPromise: Promise<void> | null = null;
+  private reconnectAttempts = 0;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private maxReconnectAttempts = 5;
+  private reconnectDelayMs = 5000;
 
   constructor() {
     super();
@@ -122,8 +126,10 @@ export class WhatsAppEngine extends EventEmitter {
 
   private async ensureSessionDir(): Promise<string> {
     const baseDir = this.getSessionDir();
-    const sessionDir = path.join(baseDir, "session");
-    fs.mkdirSync(sessionDir, { recursive: true });
+    // LocalAuth expects dataPath to be the base directory; it creates its own
+    // session subdirectories internally (e.g., "session-Name"). We only need
+    // to ensure the base directory exists.
+    fs.mkdirSync(baseDir, { recursive: true });
     return baseDir;
   }
 
@@ -174,30 +180,67 @@ export class WhatsAppEngine extends EventEmitter {
       this.client = new lib.Client({
         authStrategy: new lib.LocalAuth({
           dataPath: dataPath,
+          clientId: "session", // Use a fixed session name for consistency
         }),
         puppeteer: puppeteerOptions ?? defaultPuppeteerOptions,
       });
+
+      // Track connection state for debugging and monitoring
+      let lastConnectionState: string | null = null;
 
       this.client.on("qr", (qr: string) => {
         this.ready = false;
         this.lastQr = qr;
         this.emit("qr", qr);
+        console.log("[engine] QR code received, waiting for scan");
       });
 
       this.client.on("ready", () => {
         this.ready = true;
         this.lastQr = null;
+        this.lastError = null;
+        this.reconnectAttempts = 0; // Reset reconnect counter on successful connection
         this.emit("ready");
+        console.log("[engine] Client is ready and connected");
       });
 
       this.client.on("disconnected", (reason: string) => {
         this.ready = false;
+        console.log(`[engine] Client disconnected: ${reason}`);
         this.emit("disconnected", reason);
+
+        // Attempt auto-reconnect unless disconnect was intentional
+        // (intentional disconnects go through the disconnect() method which clears client)
+        if (this.client && reason !== "RESET_FOR_RECONNECT") {
+          this.attemptReconnect(reason);
+        }
       });
 
-      this.client.on("auth_failure", () => {
+      this.client.on("auth_failure", (msg: string) => {
         this.ready = false;
-        this.emit("auth_failure");
+        this.lastError = msg;
+        console.error(`[engine] Authentication failure: ${msg}`);
+        this.emit("auth_failure", msg);
+      });
+
+      // Monitor connection state changes for debugging
+      this.client.on("change_state", (state: any) => {
+        const stateStr = typeof state === "string" ? state : String(state);
+        if (lastConnectionState !== stateStr) {
+          console.log(`[engine] Connection state changed: ${lastConnectionState} -> ${stateStr}`);
+          lastConnectionState = stateStr;
+        }
+      });
+
+      // Monitor loading screen changes (helpful for debugging connection issues)
+      this.client.on("loading_screen", (processCode: number, message: string) => {
+        console.log(`[engine] Loading screen: ${processCode} - ${message}`);
+      });
+
+      // Handle unexpected errors that might cause silent disconnects
+      this.client.on("error", (err: Error) => {
+        console.error("[engine] Client error:", err);
+        this.lastError = err.message;
       });
 
       try {
@@ -346,7 +389,14 @@ export class WhatsAppEngine extends EventEmitter {
   sessionExists(): boolean {
     try {
       const baseDir = this.getSessionDir();
-      return fs.existsSync(path.join(baseDir, "session"));
+      // LocalAuth creates session subdirectories like "session-Number" under dataPath
+      // Check if any session subdirectory exists in the base auth directory
+      const entries = fs.readdirSync(baseDir, { withFileTypes: true });
+      return entries.some(
+        (entry) =>
+          entry.isDirectory() &&
+          (entry.name.startsWith("session-") || entry.name === "session")
+      );
     } catch {
       return false;
     }
@@ -435,7 +485,43 @@ export class WhatsAppEngine extends EventEmitter {
     }
   }
 
+  private attemptReconnect(reason: string): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error(
+        `[engine] Max reconnect attempts (${this.maxReconnectAttempts}) reached, giving up. Last reason: ${reason}`
+      );
+      this.emit("reconnect_failed");
+      return;
+    }
+
+    this.reconnectAttempts++;
+    const delay = this.reconnectDelayMs * this.reconnectAttempts;
+    console.log(
+      `[engine] Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms. Reason: ${reason}`
+    );
+
+    this.emit("reconnect_attempt", this.reconnectAttempts, this.maxReconnectAttempts, delay);
+
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.initialize().catch((err) => {
+        console.error("[engine] Reconnect failed:", err);
+      });
+    }, delay);
+  }
+
   async disconnect(clearSession: boolean = false): Promise<void> {
+    // Clear any pending reconnect timer
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnectAttempts = 0;
+
     if (this.initPromise) {
       try {
         await this.initPromise;

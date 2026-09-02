@@ -59,6 +59,13 @@ engine.on("qr", (qr) => broadcastSSE("qr", qr));
 engine.on("ready", () => broadcastSSE("ready", {}));
 engine.on("disconnected", (reason) => broadcastSSE("disconnected", reason));
 engine.on("auth_failure", () => broadcastSSE("auth_failure", {}));
+// Forward engine reconnection events to SSE clients
+engine.on("reconnect_attempt", (attempt, max, delay) => {
+    broadcastSSE("reconnect_attempt", { attempt, max, delay });
+});
+engine.on("reconnect_failed", () => {
+    broadcastSSE("reconnect_failed", {});
+});
 app.get("/health", (_req, res) => {
     res.json({ ok: true, uptime: process.uptime() });
 });

@@ -112,6 +112,10 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
     obfuscationOptions;
     wapi = null;
     initPromise = null;
+    reconnectAttempts = 0;
+    reconnectTimer = null;
+    maxReconnectAttempts = 5;
+    reconnectDelayMs = 5000;
     constructor() {
         super();
         this.obfuscationOptions = { ...exports.defaultObfuscationOptions };
@@ -130,8 +134,10 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
     }
     async ensureSessionDir() {
         const baseDir = this.getSessionDir();
-        const sessionDir = path_1.default.join(baseDir, "session");
-        fs_1.default.mkdirSync(sessionDir, { recursive: true });
+        // LocalAuth expects dataPath to be the base directory; it creates its own
+        // session subdirectories internally (e.g., "session-Name"). We only need
+        // to ensure the base directory exists.
+        fs_1.default.mkdirSync(baseDir, { recursive: true });
         return baseDir;
     }
     async initialize(puppeteerOptions) {
@@ -174,26 +180,58 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
             this.client = new lib.Client({
                 authStrategy: new lib.LocalAuth({
                     dataPath: dataPath,
+                    clientId: "session", // Use a fixed session name for consistency
                 }),
                 puppeteer: puppeteerOptions ?? defaultPuppeteerOptions,
             });
+            // Track connection state for debugging and monitoring
+            let lastConnectionState = null;
             this.client.on("qr", (qr) => {
                 this.ready = false;
                 this.lastQr = qr;
                 this.emit("qr", qr);
+                console.log("[engine] QR code received, waiting for scan");
             });
             this.client.on("ready", () => {
                 this.ready = true;
                 this.lastQr = null;
+                this.lastError = null;
+                this.reconnectAttempts = 0; // Reset reconnect counter on successful connection
                 this.emit("ready");
+                console.log("[engine] Client is ready and connected");
             });
             this.client.on("disconnected", (reason) => {
                 this.ready = false;
+                console.log(`[engine] Client disconnected: ${reason}`);
                 this.emit("disconnected", reason);
+                // Attempt auto-reconnect unless disconnect was intentional
+                // (intentional disconnects go through the disconnect() method which clears client)
+                if (this.client && reason !== "RESET_FOR_RECONNECT") {
+                    this.attemptReconnect(reason);
+                }
             });
-            this.client.on("auth_failure", () => {
+            this.client.on("auth_failure", (msg) => {
                 this.ready = false;
-                this.emit("auth_failure");
+                this.lastError = msg;
+                console.error(`[engine] Authentication failure: ${msg}`);
+                this.emit("auth_failure", msg);
+            });
+            // Monitor connection state changes for debugging
+            this.client.on("change_state", (state) => {
+                const stateStr = typeof state === "string" ? state : String(state);
+                if (lastConnectionState !== stateStr) {
+                    console.log(`[engine] Connection state changed: ${lastConnectionState} -> ${stateStr}`);
+                    lastConnectionState = stateStr;
+                }
+            });
+            // Monitor loading screen changes (helpful for debugging connection issues)
+            this.client.on("loading_screen", (processCode, message) => {
+                console.log(`[engine] Loading screen: ${processCode} - ${message}`);
+            });
+            // Handle unexpected errors that might cause silent disconnects
+            this.client.on("error", (err) => {
+                console.error("[engine] Client error:", err);
+                this.lastError = err.message;
             });
             try {
                 await this.client.initialize();
@@ -330,7 +368,11 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
     sessionExists() {
         try {
             const baseDir = this.getSessionDir();
-            return fs_1.default.existsSync(path_1.default.join(baseDir, "session"));
+            // LocalAuth creates session subdirectories like "session-Number" under dataPath
+            // Check if any session subdirectory exists in the base auth directory
+            const entries = fs_1.default.readdirSync(baseDir, { withFileTypes: true });
+            return entries.some((entry) => entry.isDirectory() &&
+                (entry.name.startsWith("session-") || entry.name === "session"));
         }
         catch {
             return false;
@@ -408,7 +450,33 @@ class WhatsAppEngine extends node_events_1.EventEmitter {
             await this.sendText(to, text);
         }
     }
+    attemptReconnect(reason) {
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+        }
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+            console.error(`[engine] Max reconnect attempts (${this.maxReconnectAttempts}) reached, giving up. Last reason: ${reason}`);
+            this.emit("reconnect_failed");
+            return;
+        }
+        this.reconnectAttempts++;
+        const delay = this.reconnectDelayMs * this.reconnectAttempts;
+        console.log(`[engine] Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms. Reason: ${reason}`);
+        this.emit("reconnect_attempt", this.reconnectAttempts, this.maxReconnectAttempts, delay);
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.initialize().catch((err) => {
+                console.error("[engine] Reconnect failed:", err);
+            });
+        }, delay);
+    }
     async disconnect(clearSession = false) {
+        // Clear any pending reconnect timer
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        this.reconnectAttempts = 0;
         if (this.initPromise) {
             try {
                 await this.initPromise;
