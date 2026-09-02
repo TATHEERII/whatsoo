@@ -228,7 +228,7 @@ export default function SettingsPage() {
                   ? `Your WhatsApp session is active (+${status.phoneNumber}).`
                   : "Your WhatsApp session is active."
                 : status?.state === "INITIALIZING"
-                  ? "Starting WhatsApp engine, please wait…"
+                  ? "Starting WhatsApp engine, please waitâ€¦"
                   : status?.state === "UNLAUNCHED"
                     ? "WhatsApp engine is not running. Start it to connect."
                     : "Scan the QR code with the WhatsApp app to connect."}
@@ -254,7 +254,7 @@ export default function SettingsPage() {
             ) : status?.state === "INITIALIZING" ? (
               <>
                 <Loader2 className="h-3 w-3 animate-spin" />
-                Initializing…
+                Initializingâ€¦
               </>
             ) : showErrorInBadge ? (
               <>
@@ -293,7 +293,7 @@ export default function SettingsPage() {
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              {connecting ? "Connecting…" : "Connect WhatsApp"}
+              {connecting ? "Connectingâ€¦" : "Connect WhatsApp"}
             </button>
           )}
         </div>
@@ -390,7 +390,7 @@ export default function SettingsPage() {
           ) : (
             <LogOut className="h-4 w-4" />
           )}
-          {signingOut ? "Signing out…" : "Sign out"}
+          {signingOut ? "Signing outâ€¦" : "Sign out"}
         </button>
       </section>
     </div>

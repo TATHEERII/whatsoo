@@ -100,7 +100,7 @@ app.get("/status", async (_req: express.Request, res: express.Response) => {
 app.post("/connect", async (_req: express.Request, res: express.Response) => {
   console.log("[engine] /connect received");
   try {
-    // Start initialization — if it fails quickly (e.g. missing Chromium, import error),
+    // Start initialization â€” if it fails quickly (e.g. missing Chromium, import error),
     // we catch and report the error. If it takes a while (normal), the caller will
     // poll /status for the actual state.
     const initPromise = engine.initialize();
@@ -115,13 +115,13 @@ app.post("/connect", async (_req: express.Request, res: express.Response) => {
       if (status.ready) {
         return res.json({ success: true, message: "WhatsApp connected" });
       }
-      return res.json({ success: true, message: "Initializing WhatsApp…" });
+      return res.json({ success: true, message: "Initializing WhatsAppâ€¦" });
     } catch (raceErr: any) {
       if (raceErr instanceof Error && raceErr.message === "INIT_TIMEOUT") {
-        // Still initializing — that's expected. Return success and let client poll.
-        return res.json({ success: true, message: "Initializing WhatsApp…" });
+        // Still initializing â€” that's expected. Return success and let client poll.
+        return res.json({ success: true, message: "Initializing WhatsAppâ€¦" });
       }
-      // Fast failure — report the error to the client
+      // Fast failure â€” report the error to the client
       console.error("[engine] /connect initialization error:", raceErr);
       return res.status(502).json({
         success: false,
@@ -139,9 +139,9 @@ app.post("/connect", async (_req: express.Request, res: express.Response) => {
 
 app.post("/reconnect", async (_req: express.Request, res: express.Response) => {
   try {
-    // Force re-initialization — clears any failed state first
+    // Force re-initialization â€” clears any failed state first
     if (engine.isInitializing()) {
-      return res.status(202).json({ success: true, message: "Already initializing…" });
+      return res.status(202).json({ success: true, message: "Already initializingâ€¦" });
     }
     // Disconnect any stale state without clearing session
     await engine.disconnect(false);
@@ -158,10 +158,10 @@ app.post("/reconnect", async (_req: express.Request, res: express.Response) => {
       if (status.error) {
         return res.status(502).json({ success: false, error: status.error });
       }
-      return res.json({ success: true, message: "Initializing WhatsApp…" });
+      return res.json({ success: true, message: "Initializing WhatsAppâ€¦" });
     } catch (raceErr: any) {
       if (raceErr instanceof Error && raceErr.message === "INIT_TIMEOUT") {
-        return res.json({ success: true, message: "Initializing WhatsApp…" });
+        return res.json({ success: true, message: "Initializing WhatsAppâ€¦" });
       }
       return res.status(502).json({
         success: false,
@@ -255,7 +255,7 @@ function main(): void {
 
   if (!ENGINE_TOKEN) {
     console.warn(
-      "[engine] WARNING: ENGINE_TOKEN is not set — all endpoints are unprotected!"
+      "[engine] WARNING: ENGINE_TOKEN is not set â€” all endpoints are unprotected!"
     );
   }
 
@@ -264,7 +264,7 @@ function main(): void {
 
     // Auto-initialize if a saved session exists (recovers from container restarts)
     if (engine.sessionExists()) {
-      console.log("[engine] Saved session found — auto-connecting…");
+      console.log("[engine] Saved session found â€” auto-connectingâ€¦");
       engine.initialize().catch((err) => {
         console.error("[engine] Auto-connect failed:", err);
       });
