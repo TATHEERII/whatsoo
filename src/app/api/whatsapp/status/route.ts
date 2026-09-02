@@ -21,7 +21,7 @@ export async function GET() {
         qrImage = null;
       }
     }
-return NextResponse.json({
+    return NextResponse.json({
       ready: status.ready,
       state: status.state,
       qr: qrImage,

@@ -29,8 +29,8 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const fetchingRef = useRef(false);
+  const pollingGenRef = useRef(0); // incremented on each effect re-run; stales out old timers
+  const failureCountRef = useRef(0);
 
   const handleSignOut = async () => {
     setSigningOut(true);
@@ -43,37 +43,59 @@ export default function SettingsPage() {
   };
 
   const fetchStatus = useCallback(async () => {
-    if (fetchingRef.current) return;
-    fetchingRef.current = true;
     try {
       const res = await fetch("/api/whatsapp/status");
       if (res.ok) {
         const data = (await res.json()) as WsStatus;
-        console.log("[Settings] Status fetched:", { ready: data.ready, hasQr: !!data.qr, state: data.state, phoneNumber: data.phoneNumber });
         setStatus(data);
         setError(null);
+        failureCountRef.current = 0;
       }
     } catch {
-      /* ignore transient errors */
-    } finally {
-      fetchingRef.current = false;
+      /* ignore transient network errors */
     }
   }, []);
 
+  // Defer the initial status fetch to the next tick to avoid interfering
+  // with Next.js RSC stream processing during client hydration.
   useEffect(() => {
-    fetchStatus();
+    const t = setTimeout(fetchStatus, 0);
+    return () => clearTimeout(t);
   }, [fetchStatus]);
 
+  // Poll with exponential backoff. Base interval is 5 s; on consecutive
+  // failures we progressively wait longer (5 s → 10 s → 20 s → 40 s cap)
+  // so we don't hammer a down or unreachable engine. The backoff resets
+  // as soon as a successful status response arrives.
   useEffect(() => {
     const shouldPoll = status?.ready !== true && !connecting;
-    if (shouldPoll) {
-      pollRef.current = setInterval(fetchStatus, 2500);
-    }
+    if (!shouldPoll) return;
+
+    const BASE_INTERVAL = 5000;
+    const MAX_INTERVAL = 40000;
+    const gen = ++pollingGenRef.current;
+
+    const schedule = (delayMs: number) => {
+      setTimeout(() => {
+        if (pollingGenRef.current !== gen) return; // stale schedule, do nothing
+        fetchStatus().finally(() => {
+          if (pollingGenRef.current !== gen) return; // component unmounted or re-rendered
+          if (status?.ready === true) return; // connected — polling will stop via effect re-run
+
+          failureCountRef.current++;
+          const backoffMs = Math.min(
+            MAX_INTERVAL,
+            BASE_INTERVAL * Math.pow(2, failureCountRef.current - 1)
+          );
+          schedule(backoffMs);
+        });
+      }, delayMs);
+    };
+
+    schedule(0); // immediate first poll
+
     return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
+      pollingGenRef.current = gen + 1; // invalidate any pending timers
     };
   }, [connecting, fetchStatus, status?.ready]);
 

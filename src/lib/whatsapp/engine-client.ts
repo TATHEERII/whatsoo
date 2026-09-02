@@ -37,8 +37,13 @@ export class WhatsAppEngineClient {
     return this.request<{ ok: boolean; uptime: number }>("/health", "GET");
   }
 
+  /**
+   * Status checks happen frequently (polling). Use a short timeout so that
+   * an unreachable engine fails fast instead of blocking the request for
+   * the full default 10s. The client-side polling loop provides backoff.
+   */
   async status(): Promise<EngineStatus> {
-    return this.request<EngineStatus>("/status", "GET", undefined, 3000);
+    return this.request<EngineStatus>("/status", "GET", undefined, 1500);
   }
 
   async connect(): Promise<{ success: boolean; message?: string }> {
