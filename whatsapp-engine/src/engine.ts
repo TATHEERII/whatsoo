@@ -95,6 +95,7 @@ export function obfuscateLine(
 export class WhatsAppEngine extends EventEmitter {
   private client: Client | null = null;
   private ready = false;
+  private initializing = false;
   private lastQr: string | null = null;
   private lastError: string | null = null;
   private obfuscationOptions: Required<ObfuscationOptions>;
@@ -102,8 +103,8 @@ export class WhatsAppEngine extends EventEmitter {
   private initPromise: Promise<void> | null = null;
   private reconnectAttempts = 0;
   private reconnectTimer: NodeJS.Timeout | null = null;
-  private maxReconnectAttempts = 5;
-  private reconnectDelayMs = 5000;
+  private maxReconnectAttempts = 10;
+  private reconnectDelayMs = 3000;
 
   constructor() {
     super();
@@ -133,6 +134,11 @@ export class WhatsAppEngine extends EventEmitter {
     return baseDir;
   }
 
+  /** Returns true if an initialization attempt is currently in flight. */
+  isInitializing(): boolean {
+    return this.initializing;
+  }
+
   async initialize(puppeteerOptions?: object): Promise<void> {
     if (this.client && this.ready) {
       return;
@@ -155,6 +161,7 @@ export class WhatsAppEngine extends EventEmitter {
     this.ready = false;
     this.lastQr = null;
     this.lastError = null;
+    this.initializing = true;
 
     this.initPromise = (async () => {
       const lib = await this.loadLib();
@@ -167,6 +174,9 @@ export class WhatsAppEngine extends EventEmitter {
           "--disable-dev-shm-usage",
           "--disable-gpu",
           "--disable-extensions",
+          "--disable-background-timer-throttling",
+          "--disable-backgrounding-occluded-windows",
+          "--disable-renderer-backgrounding",
         ],
       };
 
@@ -195,10 +205,16 @@ export class WhatsAppEngine extends EventEmitter {
         console.log("[engine] QR code received, waiting for scan");
       });
 
+      this.client.on("authenticated", () => {
+        console.log("[engine] Client authenticated successfully");
+        this.emit("authenticated");
+      });
+
       this.client.on("ready", () => {
         this.ready = true;
         this.lastQr = null;
         this.lastError = null;
+        this.initializing = false;
         this.reconnectAttempts = 0; // Reset reconnect counter on successful connection
         this.emit("ready");
         console.log("[engine] Client is ready and connected");
@@ -206,6 +222,7 @@ export class WhatsAppEngine extends EventEmitter {
 
       this.client.on("disconnected", (reason: string) => {
         this.ready = false;
+        this.initializing = false;
         console.log(`[engine] Client disconnected: ${reason}`);
         this.emit("disconnected", reason);
 
@@ -218,9 +235,13 @@ export class WhatsAppEngine extends EventEmitter {
 
       this.client.on("auth_failure", (msg: string) => {
         this.ready = false;
+        this.initializing = false;
         this.lastError = msg;
         console.error(`[engine] Authentication failure: ${msg}`);
         this.emit("auth_failure", msg);
+        this.clearSession().catch((err) => {
+          console.error("[engine] Failed to clear session after auth failure:", err);
+        });
       });
 
       // Monitor connection state changes for debugging
@@ -251,15 +272,17 @@ export class WhatsAppEngine extends EventEmitter {
         console.error("[engine] initialize failed:", message);
         try {
           await this.client?.destroy();
-        } catch {
-          /* ignore */
+        } catch (destroyErr) {
+          console.error("[engine] Failed to destroy client after init error:", destroyErr);
         }
         this.client = null;
         this.ready = false;
         this.lastQr = null;
+        this.initializing = false;
         throw err;
       } finally {
         this.initPromise = null;
+        this.initializing = false;
       }
     })();
 
@@ -289,6 +312,10 @@ export class WhatsAppEngine extends EventEmitter {
     phoneNumber: string | null;
     error: string | null;
   }> {
+    if (this.initializing || this.initPromise) {
+      return { state: "INITIALIZING", ready: false, qr: this.lastQr, phoneNumber: null, error: this.lastError };
+    }
+
     if (!this.client) {
       if (this.lastError) {
         return { state: "UNLAUNCHED", ready: false, qr: null, phoneNumber: null, error: this.lastError };
@@ -300,11 +327,7 @@ export class WhatsAppEngine extends EventEmitter {
     try {
       state = String(await this.client.getState());
     } catch {
-      if (this.initPromise) {
-        state = "INITIALIZING";
-      } else {
-        state = "UNKNOWN";
-      }
+      state = "UNKNOWN";
     }
 
     const isReady = this.ready;
@@ -499,7 +522,9 @@ export class WhatsAppEngine extends EventEmitter {
     }
 
     this.reconnectAttempts++;
-    const delay = this.reconnectDelayMs * this.reconnectAttempts;
+    const baseDelay = this.reconnectDelayMs * this.reconnectAttempts;
+    const jitter = Math.random() * 0.3 + 0.85;
+    const delay = Math.round(baseDelay * jitter);
     console.log(
       `[engine] Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms. Reason: ${reason}`
     );
@@ -521,6 +546,8 @@ export class WhatsAppEngine extends EventEmitter {
       this.reconnectTimer = null;
     }
     this.reconnectAttempts = 0;
+    this.initializing = false;
+    this.lastError = null;
 
     if (this.initPromise) {
       try {
@@ -545,8 +572,8 @@ export class WhatsAppEngine extends EventEmitter {
 
       try {
         await this.client.destroy();
-      } catch {
-        /* ignore */
+      } catch (err) {
+        console.error("[engine] Destroy failed:", err);
       }
       this.client = null;
     }

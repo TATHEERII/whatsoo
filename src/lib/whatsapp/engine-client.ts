@@ -1,9 +1,10 @@
-﻿export interface EngineStatus {
+export interface EngineStatus {
   ready: boolean;
   state: string;
   qr: string | null;
   phoneNumber: string | null;
   error: string | null;
+  initializing?: boolean;
 }
 
 export interface SendPayload {
@@ -37,22 +38,21 @@ export class WhatsAppEngineClient {
     return this.request<{ ok: boolean; uptime: number }>("/health", "GET");
   }
 
-  /**
-   * Status checks happen frequently (polling). Use a short timeout so that
-   * an unreachable engine fails fast instead of blocking the request for
-   * the full default 10s. The client-side polling loop provides backoff.
-   */
   async status(): Promise<EngineStatus> {
-    return this.request<EngineStatus>("/status", "GET", undefined, 1500);
+    return this.request<EngineStatus>("/status", "GET", undefined, 10000);
   }
 
-  async connect(): Promise<{ success: boolean; message?: string }> {
-    return this.request<{ success: boolean; message?: string }>(
+  async connect(): Promise<{ success: boolean; message?: string; error?: string }> {
+    return this.request<{ success: boolean; message?: string; error?: string }>(
       "/connect",
       "POST",
       undefined,
       30000
     );
+  }
+
+  async reconnect(): Promise<{ success: boolean }> {
+    return this.request<{ success: boolean }>("/reconnect", "POST", undefined, 10000);
   }
 
   async disconnect(
@@ -61,7 +61,8 @@ export class WhatsAppEngineClient {
     return this.request<{ success: boolean }>(
       "/disconnect",
       "POST",
-      { clearSession }
+      { clearSession },
+      15000
     );
   }
 
@@ -93,8 +94,16 @@ export class WhatsAppEngineClient {
     }
 
     if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new EngineClientError(text || res.statusText, res.status);
+      let errorMessage = res.statusText;
+      try {
+        const data = await res.json();
+        if (data && typeof data === "object") {
+          errorMessage = (data as { error?: string }).error || errorMessage;
+        }
+      } catch {
+        errorMessage = await res.text().catch(() => res.statusText);
+      }
+      throw new EngineClientError(errorMessage, res.status);
     }
 
     return (await res.json()) as T;
@@ -109,3 +118,4 @@ export function getEngineClient(): WhatsAppEngineClient {
   }
   return cached;
 }
+

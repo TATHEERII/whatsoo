@@ -11,22 +11,22 @@ export async function POST() {
   }
   try {
     const engine = getEngineClient();
-    const result = await engine.connect();
+    const result = await engine.reconnect();
 
     if (!result.success) {
       return NextResponse.json(
-        { success: false, error: result.error ?? "Failed to start WhatsApp" },
+        { success: false, error: "Failed to reconnect WhatsApp" },
         { status: 502 }
       );
     }
 
     return NextResponse.json({
       success: true,
-      message: result.message ?? "Initializing WhatsApp...",
+      message: "Reconnecting WhatsApp...",
     });
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to start WhatsApp";
+      error instanceof Error ? error.message : "Failed to reconnect WhatsApp";
     const status = (error as { status?: number }).status ?? 502;
     const finalStatus = status >= 400 && status < 600 && status !== 502 ? status : 502;
     return NextResponse.json(

@@ -30,7 +30,7 @@ function authMiddleware(
   next();
 }
 
-app.use((req, res, next) => {
+app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (req.path === "/health") {
     next();
     return;
@@ -67,9 +67,9 @@ function broadcastSSE(event: string, data: unknown): void {
   }
 }
 
-engine.on("qr", (qr) => broadcastSSE("qr", qr));
+engine.on("qr", (qr: string) => broadcastSSE("qr", qr));
 engine.on("ready", () => broadcastSSE("ready", {}));
-engine.on("disconnected", (reason) => broadcastSSE("disconnected", reason));
+engine.on("disconnected", (reason: string) => broadcastSSE("disconnected", reason));
 engine.on("auth_failure", () => broadcastSSE("auth_failure", {}));
 
 // Forward engine reconnection events to SSE clients
@@ -80,27 +80,104 @@ engine.on("reconnect_failed", () => {
   broadcastSSE("reconnect_failed", {});
 });
 
-app.get("/health", (_req, res) => {
+app.get("/health", (_req: express.Request, res: express.Response) => {
   res.json({ ok: true, uptime: process.uptime() });
 });
 
-app.get("/status", async (_req, res) => {
+app.get("/status", async (_req: express.Request, res: express.Response) => {
   try {
     const status = await engine.getStatus();
-    res.json(status);
+    res.json({
+      ...status,
+      initializing: engine.isInitializing(),
+    });
   } catch (err) {
+    console.error("[engine] /status error:", err);
     res.status(500).json({ error: "Failed to get status" });
   }
 });
 
-app.post("/connect", (_req, res) => {
-  engine.initialize().catch((err) => {
-    console.error("[engine] initialize failed:", err);
-  });
-  res.json({ success: true, message: "Initializing WhatsAppâ€¦" });
+app.post("/connect", async (_req: express.Request, res: express.Response) => {
+  console.log("[engine] /connect received");
+  try {
+    // Start initialization — if it fails quickly (e.g. missing Chromium, import error),
+    // we catch and report the error. If it takes a while (normal), the caller will
+    // poll /status for the actual state.
+    const initPromise = engine.initialize();
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("INIT_TIMEOUT")), 8000)
+    );
+
+    try {
+      await Promise.race([initPromise, timeoutPromise]);
+      // Initialization completed (success or fast failure)
+      const status = await engine.getStatus();
+      if (status.ready) {
+        return res.json({ success: true, message: "WhatsApp connected" });
+      }
+      return res.json({ success: true, message: "Initializing WhatsApp…" });
+    } catch (raceErr: any) {
+      if (raceErr instanceof Error && raceErr.message === "INIT_TIMEOUT") {
+        // Still initializing — that's expected. Return success and let client poll.
+        return res.json({ success: true, message: "Initializing WhatsApp…" });
+      }
+      // Fast failure — report the error to the client
+      console.error("[engine] /connect initialization error:", raceErr);
+      return res.status(502).json({
+        success: false,
+        error: raceErr instanceof Error ? raceErr.message : "Initialization failed",
+      });
+    }
+  } catch (err) {
+    console.error("[engine] /connect error:", err);
+    return res.status(502).json({
+      success: false,
+      error: err instanceof Error ? err.message : "Failed to start WhatsApp",
+    });
+  }
 });
 
-app.post("/disconnect", async (req, res) => {
+app.post("/reconnect", async (_req: express.Request, res: express.Response) => {
+  try {
+    // Force re-initialization — clears any failed state first
+    if (engine.isInitializing()) {
+      return res.status(202).json({ success: true, message: "Already initializing…" });
+    }
+    // Disconnect any stale state without clearing session
+    await engine.disconnect(false);
+    const initPromise = engine.initialize();
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("INIT_TIMEOUT")), 8000)
+    );
+    try {
+      await Promise.race([initPromise, timeoutPromise]);
+      const status = await engine.getStatus();
+      if (status.ready) {
+        return res.json({ success: true, message: "WhatsApp reconnected" });
+      }
+      if (status.error) {
+        return res.status(502).json({ success: false, error: status.error });
+      }
+      return res.json({ success: true, message: "Initializing WhatsApp…" });
+    } catch (raceErr: any) {
+      if (raceErr instanceof Error && raceErr.message === "INIT_TIMEOUT") {
+        return res.json({ success: true, message: "Initializing WhatsApp…" });
+      }
+      return res.status(502).json({
+        success: false,
+        error: raceErr instanceof Error ? raceErr.message : "Reconnect failed",
+      });
+    }
+  } catch (err) {
+    console.error("[engine] /reconnect error:", err);
+    return res.status(502).json({
+      success: false,
+      error: err instanceof Error ? err.message : "Reconnect failed",
+    });
+  }
+});
+
+app.post("/disconnect", async (req: express.Request, res: express.Response) => {
   const clearSession = !!req.body?.clearSession;
   try {
     await engine.disconnect(clearSession);
@@ -110,7 +187,7 @@ app.post("/disconnect", async (req, res) => {
   }
 });
 
-app.post("/send", async (req, res) => {
+app.post("/send", async (req: express.Request, res: express.Response) => {
   const { to, text, filePath, mediaType } = req.body || {};
   if (!to) {
     res.status(400).json({ error: "Missing 'to' field" });
@@ -143,7 +220,7 @@ app.post("/send", async (req, res) => {
   }
 });
 
-app.get("/events", (req, res) => {
+app.get("/events", (req: express.Request, res: express.Response) => {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
     "Cache-Control": "no-cache",
@@ -178,12 +255,20 @@ function main(): void {
 
   if (!ENGINE_TOKEN) {
     console.warn(
-      "[engine] WARNING: ENGINE_TOKEN is not set  all endpoints are unprotected!"
+      "[engine] WARNING: ENGINE_TOKEN is not set — all endpoints are unprotected!"
     );
   }
 
   app.listen(PORT, () => {
     console.log(`[engine] listening on :${PORT}`);
+
+    // Auto-initialize if a saved session exists (recovers from container restarts)
+    if (engine.sessionExists()) {
+      console.log("[engine] Saved session found — auto-connecting…");
+      engine.initialize().catch((err) => {
+        console.error("[engine] Auto-connect failed:", err);
+      });
+    }
   });
 }
 

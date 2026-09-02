@@ -24,18 +24,21 @@ export async function GET() {
     return NextResponse.json({
       ready: status.ready,
       state: status.state,
+      initializing: status.initializing ?? false,
       qr: qrImage,
       phoneNumber: status.phoneNumber,
       error: status.error ?? null,
     });
   } catch (error) {
     if (error instanceof EngineClientError && !error.status) {
+      const reason = error instanceof Error ? error.message : "engine unreachable";
       return NextResponse.json({
         ready: false,
         state: "UNLAUNCHED",
+        initializing: false,
         qr: null,
         phoneNumber: null,
-        error: null,
+        error: `WhatsApp engine unreachable: ${reason}`,
       });
     }
     return NextResponse.json(

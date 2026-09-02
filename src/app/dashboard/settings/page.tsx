@@ -21,6 +21,7 @@ interface WsStatus {
   qr: string | null;
   phoneNumber: string | null;
   error: string | null;
+  initializing?: boolean;
 }
 
 export default function SettingsPage() {
@@ -29,7 +30,7 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const pollingGenRef = useRef(0); // incremented on each effect re-run; stales out old timers
+  const pollingGenRef = useRef(0);
   const failureCountRef = useRef(0);
 
   const handleSignOut = async () => {
@@ -50,60 +51,36 @@ export default function SettingsPage() {
         setStatus(data);
         setError(null);
         failureCountRef.current = 0;
+      } else {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(data.error ?? `Status check failed (${res.status})`);
       }
     } catch {
       /* ignore transient network errors */
     }
   }, []);
 
-  // Defer the initial status fetch to the next tick to avoid interfering
-  // with Next.js RSC stream processing during client hydration.
-  useEffect(() => {
-    const t = setTimeout(fetchStatus, 0);
-    return () => clearTimeout(t);
-  }, [fetchStatus]);
-
-  // Poll with exponential backoff. Base interval is 5 s; on consecutive
-  // failures we progressively wait longer (5 s → 10 s → 20 s → 40 s cap)
-  // so we don't hammer a down or unreachable engine. The backoff resets
-  // as soon as a successful status response arrives.
-  useEffect(() => {
-    const shouldPoll = status?.ready !== true && !connecting;
-    if (!shouldPoll) return;
-
-    const BASE_INTERVAL = 5000;
-    const MAX_INTERVAL = 40000;
-    const gen = ++pollingGenRef.current;
-
-    const schedule = (delayMs: number) => {
-      setTimeout(() => {
-        if (pollingGenRef.current !== gen) return; // stale schedule, do nothing
-        fetchStatus().finally(() => {
-          if (pollingGenRef.current !== gen) return; // component unmounted or re-rendered
-          if (status?.ready === true) return; // connected — polling will stop via effect re-run
-
-          failureCountRef.current++;
-          const backoffMs = Math.min(
-            MAX_INTERVAL,
-            BASE_INTERVAL * Math.pow(2, failureCountRef.current - 1)
-          );
-          schedule(backoffMs);
-        });
-      }, delayMs);
-    };
-
-    schedule(0); // immediate first poll
-
-    return () => {
-      pollingGenRef.current = gen + 1; // invalidate any pending timers
-    };
-  }, [connecting, fetchStatus, status?.ready]);
+  const checkEngineHealth = useCallback(async (): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/whatsapp/status", { signal: AbortSignal.timeout(5000) });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }, []);
 
   const handleConnect = async () => {
     setConnecting(true);
     setBusy(true);
     setError(null);
     try {
+      const healthy = await checkEngineHealth();
+      if (!healthy) {
+        setError("WhatsApp engine is not reachable. Please try again later.");
+        setConnecting(false);
+        setBusy(false);
+        return;
+      }
       const res = await fetch("/api/whatsapp/connect", { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.success === false) {
@@ -118,17 +95,105 @@ export default function SettingsPage() {
     }
   };
 
-  const handleDisconnect = async () => {
+  const handleReconnect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const healthy = await checkEngineHealth();
+      if (!healthy) {
+        setError("WhatsApp engine is not reachable. Please try again later.");
+        setBusy(false);
+        return;
+      }
+      const res = await fetch("/api/whatsapp/reconnect", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.success === false) {
+        setError(data.error ?? "Failed to reconnect WhatsApp.");
+      }
+      await fetchStatus();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Reconnection failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDisconnect = async (clearSession = false) => {
     setBusy(true);
     try {
-      await fetch("/api/whatsapp/disconnect", { method: "POST" });
+      const res = await fetch("/api/whatsapp/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clearSession }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "Failed to disconnect.");
+      }
       await fetchStatus();
     } finally {
       setBusy(false);
     }
   };
 
+  const handleClearSessionAndReconnect = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await handleDisconnect(true);
+      await new Promise((r) => setTimeout(r, 1000));
+      await handleConnect();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    const t = setTimeout(fetchStatus, 0);
+    return () => clearTimeout(t);
+  }, [fetchStatus]);
+
+  useEffect(() => {
+    const shouldPoll = status?.ready !== true && !connecting;
+    if (!shouldPoll) return;
+
+    const BASE_INTERVAL = 3000;
+    const MAX_INTERVAL = 15000;
+    const gen = ++pollingGenRef.current;
+
+    const schedule = (delayMs: number) => {
+      setTimeout(() => {
+        if (pollingGenRef.current !== gen) return;
+        fetchStatus().finally(() => {
+          if (pollingGenRef.current !== gen) return;
+          if (status?.ready === true) return;
+
+          failureCountRef.current++;
+          const backoffMs = Math.min(
+            MAX_INTERVAL,
+            BASE_INTERVAL * Math.pow(2, failureCountRef.current - 1)
+          );
+          schedule(backoffMs);
+        });
+      }, delayMs);
+    };
+
+    schedule(0);
+
+    return () => {
+      pollingGenRef.current = gen + 1;
+    };
+  }, [connecting, fetchStatus, status?.ready]);
+
   const connected = status?.ready === true && !status?.qr;
+
+  const showReconnectButton =
+    !connected &&
+    !connecting &&
+    !busy &&
+    (status?.error !== null || status?.state === "UNLAUNCHED");
+
+  const showErrorInBadge = status?.error && !connected && status?.state !== "INITIALIZING";
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-10">
@@ -163,8 +228,10 @@ export default function SettingsPage() {
                   ? `Your WhatsApp session is active (+${status.phoneNumber}).`
                   : "Your WhatsApp session is active."
                 : status?.state === "INITIALIZING"
-                  ? "Starting WhatsApp engine, please wait…"
-                  : "Scan the QR code with the WhatsApp app to connect."}
+                  ? "Starting WhatsApp engine, please wait�"
+                  : status?.state === "UNLAUNCHED"
+                    ? "WhatsApp engine is not running. Start it to connect."
+                    : "Scan the QR code with the WhatsApp app to connect."}
             </p>
           </div>
         </div>
@@ -174,30 +241,37 @@ export default function SettingsPage() {
             className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium ${
               connected
                 ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                : "border-neutral-700 bg-neutral-800/50 text-neutral-400"
+                : showErrorInBadge
+                  ? "border-red-500/30 bg-red-500/10 text-red-400"
+                  : "border-neutral-700 bg-neutral-800/50 text-neutral-400"
             }`}
           >
-          {connected ? (
-            <>
-              <CheckCircle2 className="h-3 w-3" />
-              Connected
-            </>
-          ) : status?.state === "INITIALIZING" ? (
-            <>
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Initializing…
-            </>
-          ) : (
-            <>
-              <AlertCircle className="h-3 w-3" />
-              {status ? `State: ${status.state}` : "Disconnected"}
-            </>
-          )}
-        </span>
+            {connected ? (
+              <>
+                <CheckCircle2 className="h-3 w-3" />
+                Connected
+              </>
+            ) : status?.state === "INITIALIZING" ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Initializing�
+              </>
+            ) : showErrorInBadge ? (
+              <>
+                <AlertCircle className="h-3 w-3" />
+                {status.error}
+              </>
+            ) : (
+              <>
+                <AlertCircle className="h-3 w-3" />
+                {status ? `State: ${status.state}` : "Disconnected"}
+              </>
+            )}
+          </span>
 
-        {connected ? (
+          {connected ? (
             <button
-              onClick={handleDisconnect}
+              onClick={() => handleDisconnect(false)}
               disabled={busy}
               className="flex items-center gap-2 rounded-xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-400 transition-colors hover:bg-red-500/20 disabled:opacity-50"
             >
@@ -219,33 +293,62 @@ export default function SettingsPage() {
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              {connecting ? "Connecting…" : "Connect WhatsApp"}
+              {connecting ? "Connecting�" : "Connect WhatsApp"}
             </button>
           )}
         </div>
 
-        {connected && (
-          <div className="mt-4 flex items-center gap-2 rounded-xl border border-neutral-800 bg-neutral-950/50 px-4 py-2.5">
-            <Phone className="h-4 w-4 text-neutral-500" />
-            <span className="text-sm text-neutral-400">Connected number:</span>
-            {status?.phoneNumber ? (
-              <span className="font-medium text-neutral-100">+{status.phoneNumber}</span>
-            ) : (
-              <Loader2 className="h-4 w-4 animate-spin text-neutral-500" />
-            )}
+        {showReconnectButton && !showErrorInBadge && (
+          <div className="mt-4 flex items-center gap-3">
+            <button
+              onClick={handleReconnect}
+              disabled={busy}
+              className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-400 transition-colors hover:bg-amber-500/20 disabled:opacity-50"
+            >
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Retry / Reconnect
+            </button>
+            <button
+              onClick={handleClearSessionAndReconnect}
+              disabled={busy}
+              className="flex items-center gap-2 rounded-xl border border-neutral-700 bg-neutral-800/50 px-4 py-2 text-sm font-medium text-neutral-300 transition-colors hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-400 disabled:opacity-50"
+            >
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Clear Session and Reconnect
+            </button>
           </div>
         )}
 
-        {error && (
-          <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-            {error}
-          </div>
-        )}
-
-        {status?.error && (
+        {showErrorInBadge && !error && (
           <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-300">
             <div className="font-medium">Engine error</div>
             <div className="mt-1 break-words text-amber-200/80">{status.error}</div>
+            <button
+              onClick={handleReconnect}
+              disabled={busy}
+              className="mt-3 flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-400 transition-colors hover:bg-amber-500/20 disabled:opacity-50"
+            >
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              Retry
+            </button>
+          </div>
+        )}
+
+        {error && !connected && (
+          <div className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+            {error}
           </div>
         )}
 
@@ -258,7 +361,7 @@ export default function SettingsPage() {
               className="h-56 w-56 rounded-lg bg-white p-2"
             />
             <p className="mt-4 text-sm text-neutral-400">
-              Open WhatsApp → Linked Devices → Link a Device and scan this code.
+              Open WhatsApp ? Linked Devices ? Link a Device and scan this code.
             </p>
           </div>
         )}
@@ -287,7 +390,7 @@ export default function SettingsPage() {
           ) : (
             <LogOut className="h-4 w-4" />
           )}
-          {signingOut ? "Signing out…" : "Sign out"}
+          {signingOut ? "Signing out�" : "Sign out"}
         </button>
       </section>
     </div>
