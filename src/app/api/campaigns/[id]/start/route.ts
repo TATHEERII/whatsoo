@@ -49,6 +49,12 @@ export async function POST(
     maxAttempts: maxAttempts ? Number(maxAttempts) : undefined,
   });
 
+  // Trigger an immediate processing cycle in serverless environments
+  // (cron jobs will also trigger periodically as a fallback)
+  void sqliteQueue.triggerProcessing().catch((err) =>
+    console.error("[SQLiteQueue] Error processing jobs after enqueue:", err)
+  );
+
   const updatedCampaign = await prisma.campaign.update({
     where: { id: params.id },
     data: scheduledAt ? { scheduledAt: new Date(scheduledAt) } : {},

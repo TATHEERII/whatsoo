@@ -18,8 +18,6 @@ export interface QueueStats {
   total: number;
 }
 
-const POLL_INTERVAL_MS = 30_000;
-
 function calculateDelay(
   delayType: DelayType,
   delayValue: number,
@@ -279,16 +277,14 @@ class SqliteQueueService {
   }
 
   startScheduler(): void {
+    // In a serverless environment (e.g., Vercel), setInterval does not persist
+    // beyond the request lifecycle. Scheduling is now handled externally
+    // via Vercel Cron Jobs that call /api/cron/process-jobs.
     if (this.schedulerInterval) return;
 
-    this.schedulerInterval = setInterval(() => {
-      this.processPendingJobs().catch((err) => {
-        console.error("[SQLiteQueue] Error processing jobs:", err);
-      });
-    }, POLL_INTERVAL_MS);
-
-    console.log(
-      `[SQLiteQueue] Scheduler started (polling every ${POLL_INTERVAL_MS / 1000}s)`
+    console.warn(
+      "[SQLiteQueue] startScheduler() called but setInterval is not reliable in serverless environments. " +
+        "Use Vercel Cron Jobs (/api/cron/process-jobs) instead."
     );
   }
 
@@ -298,6 +294,16 @@ class SqliteQueueService {
       this.schedulerInterval = null;
       console.log("[SQLiteQueue] Scheduler stopped");
     }
+  }
+
+  /**
+   * Trigger a single processing cycle. Intended to be called by
+   * Vercel Cron Jobs or on-demand. This is the primary entry point
+   * for processing pending jobs in serverless environments.
+   */
+  async triggerProcessing(): Promise<void> {
+    console.log("[SQLiteQueue] Processing triggered");
+    await this.processPendingJobs();
   }
 
   async getQueueStats(campaignId?: string): Promise<QueueStats> {

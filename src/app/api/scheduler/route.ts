@@ -9,9 +9,11 @@ export async function POST() {
   }
 
   const queue = getSqliteQueueService();
-  queue.startScheduler();
+  // In serverless environments, the scheduler runs via cron, not setInterval.
+  // This endpoint triggers an immediate processing cycle.
+  await queue.triggerProcessing();
 
-  return NextResponse.json({ status: "started" });
+  return NextResponse.json({ status: "completed" });
 }
 
 export async function DELETE() {

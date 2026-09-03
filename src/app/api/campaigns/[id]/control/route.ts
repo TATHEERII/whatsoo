@@ -65,7 +65,7 @@ export async function POST(
 
   const sqliteQueue = getSqliteQueueService();
 
-  if (action === "start") {
+   if (action === "start") {
     sqliteQueue.startScheduler();
 
     const startBody = await request.json().catch(() => ({}));
@@ -75,6 +75,12 @@ export async function POST(
       delayValue: startBody.delayValue ? Number(startBody.delayValue) : undefined,
       maxAttempts: startBody.maxAttempts ? Number(startBody.maxAttempts) : undefined,
     });
+
+    // Trigger an immediate processing cycle in serverless environments
+    // (cron jobs will also trigger periodically as a fallback)
+    void sqliteQueue.triggerProcessing().catch((err) =>
+      console.error("[SQLiteQueue] Error processing jobs after enqueue:", err)
+    );
   }
 
   const updatedCampaign = await prisma.campaign.update({
