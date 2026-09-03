@@ -32,7 +32,7 @@ export async function POST(
     return NextResponse.json({ error: "Failed to sync user" }, { status: 500 });
   }
 
-  const body = await request.json();
+const body = await request.json().catch(() => ({}));
   const { action } = body;
 
   if (!action || !VALID_TRANSITIONS[action]) {
@@ -65,19 +65,39 @@ export async function POST(
 
   const sqliteQueue = getSqliteQueueService();
 
-   if (action === "start") {
+  if (action === "start") {
     sqliteQueue.startScheduler();
 
-    const startBody = await request.json().catch(() => ({}));
-    await sqliteQueue.enqueueCampaign({
-      campaignId: params.id,
-      delayType: startBody.delayType,
-      delayValue: startBody.delayValue ? Number(startBody.delayValue) : undefined,
-      maxAttempts: startBody.maxAttempts ? Number(startBody.maxAttempts) : undefined,
-    });
+    let enqueuedCount = 0;
+    try {
+      enqueuedCount = await sqliteQueue.enqueueCampaign({
+        campaignId: params.id,
+        delayType: body.delayType,
+        delayValue: body.delayValue ? Number(body.delayValue) : undefined,
+        maxAttempts: body.maxAttempts ? Number(body.maxAttempts) : undefined,
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to enqueue campaign";
+      return NextResponse.json(
+        { error: message },
+        { status: 400 }
+      );
+    }
 
-    // Trigger an immediate processing cycle in serverless environments
-    // (cron jobs will also trigger periodically as a fallback)
+    if (enqueuedCount === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "No contacts to send to. The selected contact list is empty.",
+          id: campaign.id,
+          name: campaign.name,
+          status: campaign.status,
+        },
+        { status: 400 }
+      );
+    }
+
     void sqliteQueue.triggerProcessing().catch((err) =>
       console.error("[SQLiteQueue] Error processing jobs after enqueue:", err)
     );

@@ -24,7 +24,11 @@ export async function GET(
     },
     include: {
       contactList: {
-        select: { id: true, name: true },
+        select: {
+          id: true,
+          name: true,
+          _count: { select: { contacts: true } },
+        },
       },
     },
   });
@@ -46,6 +50,7 @@ export async function GET(
   );
   const sentLogs = countMap.get("sent") ?? 0;
   const failedLogs = countMap.get("failed") ?? 0;
+  const totalContacts = campaign.contactList?._count.contacts ?? 0;
 
   const successRate =
     totalLogs > 0 ? ((sentLogs / totalLogs) * 100).toFixed(1) : "0.0";
@@ -61,7 +66,7 @@ export async function GET(
     createdAt: campaign.createdAt,
     updatedAt: campaign.updatedAt,
     stats: {
-      totalContacts: totalLogs,
+      totalContacts,
       sent: sentLogs,
       failed: failedLogs,
       successRate: `${successRate}%`,
