@@ -33,12 +33,10 @@ export async function GET(
   const limit = parseInt(searchParams.get("limit") || "50", 10);
   const skip = (page - 1) * limit;
 
-  const [logs, total] = await Promise.all([
+  const [logs, jobs, logTotal, jobTotal] = await Promise.all([
     prisma.campaignLog.findMany({
       where: { campaignId: params.id },
       orderBy: { sentAt: "desc" },
-      skip,
-      take: limit,
       select: {
         id: true,
         recipient: true,
@@ -48,13 +46,77 @@ export async function GET(
         sentAt: true,
       },
     }),
-    prisma.campaignLog.count({
+    prisma.jobQueue.findMany({
       where: { campaignId: params.id },
+      orderBy: { scheduledAt: "asc" },
+      select: {
+        id: true,
+        recipient: true,
+        recipientName: true,
+        status: true,
+        error: true,
+        scheduledAt: true,
+        processedAt: true,
+        completedAt: true,
+        attempts: true,
+        maxAttempts: true,
+      },
     }),
+    prisma.campaignLog.count({ where: { campaignId: params.id } }),
+    prisma.jobQueue.count({ where: { campaignId: params.id } }),
   ]);
 
+  type UnifiedEntry = {
+    id: string;
+    source: "log" | "job";
+    recipient: string;
+    recipientName: string | null;
+    status: string;
+    messageId: string | null;
+    error: string | null;
+    timestamp: string;
+    attempts?: number;
+    maxAttempts?: number;
+  };
+
+  const unified: UnifiedEntry[] = [
+    ...logs.map((l) => ({
+      id: l.id,
+      source: "log" as const,
+      recipient: l.recipient,
+      recipientName: null,
+      status: l.status,
+      messageId: l.messageId,
+      error: l.error,
+      timestamp: new Date(l.sentAt).toISOString(),
+    })),
+    ...jobs.map((j) => ({
+      id: j.id,
+      source: "job" as const,
+      recipient: j.recipient ?? "(unknown)",
+      recipientName: j.recipientName ?? null,
+      status: j.status,
+      messageId: null,
+      error: j.error,
+      timestamp:
+        (j.completedAt ?? j.processedAt ?? j.scheduledAt).toISOString(),
+      attempts: j.attempts,
+      maxAttempts: j.maxAttempts,
+    })),
+  ];
+
+  unified.sort((a, b) => {
+    if (a.source === b.source) {
+      return a.timestamp < b.timestamp ? 1 : -1;
+    }
+    return a.source === "job" ? -1 : 1;
+  });
+
+  const total = logTotal + jobTotal;
+  const paged = unified.slice(skip, skip + limit);
+
   return NextResponse.json({
-    logs,
+    logs: paged,
     pagination: {
       page,
       limit,

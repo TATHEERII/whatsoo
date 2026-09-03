@@ -43,13 +43,24 @@ export async function GET(
     _count: { _all: true },
   });
 
+  const jobStatusCounts = await prisma.jobQueue.groupBy({
+    by: ["status"],
+    where: { campaignId: params.id },
+    _count: { _all: true },
+  });
+
   const countMap = new Map(statusCounts.map((s) => [s.status, s._count._all]));
+  const jobCountMap = new Map(
+    jobStatusCounts.map((s) => [s.status, s._count._all])
+  );
   const totalLogs = statusCounts.reduce(
     (sum, s) => sum + s._count._all,
     0
   );
   const sentLogs = countMap.get("sent") ?? 0;
   const failedLogs = countMap.get("failed") ?? 0;
+  const pendingJobs =
+    (jobCountMap.get("pending") ?? 0) + (jobCountMap.get("processing") ?? 0);
   const totalContacts = campaign.contactList?._count.contacts ?? 0;
 
   const successRate =
@@ -69,6 +80,7 @@ export async function GET(
       totalContacts,
       sent: sentLogs,
       failed: failedLogs,
+      pending: pendingJobs,
       successRate: `${successRate}%`,
     },
   });

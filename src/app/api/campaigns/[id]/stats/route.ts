@@ -28,17 +28,24 @@ export async function GET(
     return NextResponse.json({ error: "Campaign not found" }, { status: 404 });
   }
 
-  const [totalLogs, sentLogs, failedLogs] = await Promise.all([
-    prisma.campaignLog.count({
-      where: { campaignId: params.id },
-    }),
-    prisma.campaignLog.count({
-      where: { campaignId: params.id, status: "sent" },
-    }),
-    prisma.campaignLog.count({
-      where: { campaignId: params.id, status: "failed" },
-    }),
-  ]);
+  const [totalLogs, sentLogs, failedLogs, pendingJobs, processingJobs] =
+    await Promise.all([
+      prisma.campaignLog.count({
+        where: { campaignId: params.id },
+      }),
+      prisma.campaignLog.count({
+        where: { campaignId: params.id, status: "sent" },
+      }),
+      prisma.campaignLog.count({
+        where: { campaignId: params.id, status: "failed" },
+      }),
+      prisma.jobQueue.count({
+        where: { campaignId: params.id, status: "pending" },
+      }),
+      prisma.jobQueue.count({
+        where: { campaignId: params.id, status: "processing" },
+      }),
+    ]);
 
   const successRate =
     totalLogs > 0 ? ((sentLogs / totalLogs) * 100).toFixed(1) : "0.0";
@@ -73,6 +80,7 @@ export async function GET(
       totalContacts: totalLogs,
       sent: sentLogs,
       failed: failedLogs,
+      pending: pendingJobs + processingJobs,
       successRate: `${successRate}%`,
     },
     logs,

@@ -32,17 +32,23 @@ interface Campaign {
     totalContacts: number;
     sent: number;
     failed: number;
+    pending: number;
     successRate: string;
   };
 }
 
 interface CampaignLog {
   id: string;
+  source?: "log" | "job";
   recipient: string;
+  recipientName?: string | null;
   status: string;
   messageId: string | null;
   error: string | null;
+  timestamp?: string;
   sentAt: string;
+  attempts?: number;
+  maxAttempts?: number;
 }
 
 type CampaignStatus = Campaign["status"];
@@ -133,6 +139,12 @@ function StatusBadge({ status }: { status: string }) {
       className:
         "border-amber-500/30 bg-amber-500/10 text-amber-400",
       Icon: AlertCircle,
+    },
+    processing: {
+      label: "Sending",
+      className:
+        "border-sky-500/30 bg-sky-500/10 text-sky-400",
+      Icon: Loader2,
     },
     delivered: {
       label: "Delivered",
@@ -347,7 +359,7 @@ export default function CampaignDetailPage() {
         </div>
       </header>
 
-      <section className="mb-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="mb-8 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-5">
         <div className="luxury-card">
           <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400">
             <Phone className="h-5 w-5" />
@@ -375,6 +387,16 @@ export default function CampaignDetailPage() {
           <p className="text-sm text-neutral-400">Failed</p>
           <p className="mt-1 text-2xl font-semibold text-neutral-100">
             {campaign.stats.failed.toLocaleString()}
+          </p>
+        </div>
+
+        <div className="luxury-card">
+          <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10 text-amber-400">
+            <AlertCircle className="h-5 w-5" />
+          </div>
+          <p className="text-sm text-neutral-400">Pending</p>
+          <p className="mt-1 text-2xl font-semibold text-neutral-100">
+            {campaign.stats.pending.toLocaleString()}
           </p>
         </div>
 
@@ -419,10 +441,13 @@ export default function CampaignDetailPage() {
                     Phone
                   </th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">
-                    Timestamp
+                    Time
                   </th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">
                     Status
+                  </th>
+                  <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">
+                    Attempts
                   </th>
                   <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-neutral-500">
                     Error
@@ -430,31 +455,52 @@ export default function CampaignDetailPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-800/60">
-                {logs.map((log) => (
-                  <tr
-                    key={log.id}
-                    className="transition-colors hover:bg-neutral-800/40"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2 text-neutral-300">
-                        <Phone className="h-3.5 w-3.5 text-neutral-600" />
-                        {log.recipient}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-neutral-400">
-                      <div className="flex items-center gap-2">
-                        <Clock className="h-3.5 w-3.5 text-neutral-600" />
-                        {formatTime(log.sentAt)}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <StatusBadge status={log.status} />
-                    </td>
-                    <td className="px-4 py-3 text-xs text-red-400">
-                      {log.error || "—"}
-                    </td>
-                  </tr>
-                ))}
+                {logs.map((log) => {
+                  const ts = log.timestamp ?? log.sentAt;
+                  const isPending =
+                    log.status === "pending" || log.status === "processing";
+                  return (
+                    <tr
+                      key={log.id}
+                      className="transition-colors hover:bg-neutral-800/40"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col text-neutral-300">
+                          <div className="flex items-center gap-2">
+                            <Phone className="h-3.5 w-3.5 text-neutral-600" />
+                            {log.recipient}
+                          </div>
+                          {log.recipientName && (
+                            <span className="ml-5 text-xs text-neutral-500">
+                              {log.recipientName}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-neutral-400">
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-3.5 w-3.5 text-neutral-600" />
+                          {formatTime(ts)}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusBadge status={log.status} />
+                      </td>
+                      <td className="px-4 py-3 text-xs text-neutral-400">
+                        {isPending || log.attempts ? (
+                          <span>
+                            {log.attempts ?? 0} / {log.maxAttempts ?? 3}
+                          </span>
+                        ) : (
+                          <span className="text-neutral-600">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-red-400">
+                        {log.error || "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
