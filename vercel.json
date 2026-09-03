@@ -1,5 +1,5 @@
 {
-    "cron": [
+    "crons": [
         {
             "path": "/api/cron/process-jobs?token=${CRON_SECRET_TOKEN}",
             "schedule": "*/2 * * * *"
