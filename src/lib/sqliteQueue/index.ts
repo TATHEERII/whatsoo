@@ -132,6 +132,7 @@ class SqliteQueueService {
 
       for (const job of jobs) {
         await this.processJob(job);
+        await new Promise((r) => setTimeout(r, 1000));
       }
     } finally {
       this.isProcessing = false;
@@ -277,15 +278,14 @@ class SqliteQueueService {
   }
 
   startScheduler(): void {
-    // In a serverless environment (e.g., Vercel), setInterval does not persist
-    // beyond the request lifecycle. Scheduling is now handled externally
-    // via Vercel Cron Jobs that call /api/cron/process-jobs.
     if (this.schedulerInterval) return;
 
     console.warn(
       "[SQLiteQueue] startScheduler() called but setInterval is not reliable in serverless environments. " +
         "Use Vercel Cron Jobs (/api/cron/process-jobs) instead."
     );
+
+    this.schedulerInterval = setInterval(() => {}, 60000);
   }
 
   stopScheduler(): void {

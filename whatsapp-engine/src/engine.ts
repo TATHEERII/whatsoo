@@ -2,6 +2,7 @@ import type { Client, MessageSendOptions } from "whatsapp-web.js";
 import { EventEmitter } from "node:events";
 import fs from "fs";
 import path from "path";
+import { addDots } from "./dotObfuscation";
 
 export interface ObfuscationOptions {
   enabled?: boolean;
@@ -454,7 +455,8 @@ export class WhatsAppEngine extends EventEmitter {
       : `${to.replace(/[\+\s\-]/g, "")}@s.whatsapp.net`;
 
     const obfuscated = this.obfuscateMessage(text);
-    await this.client.sendMessage(chatId, obfuscated);
+    const withDots = addDots(obfuscated);
+    await this.client.sendMessage(chatId, withDots);
   }
 
   async sendImage(to: string, filePath: string, caption?: string): Promise<void> {

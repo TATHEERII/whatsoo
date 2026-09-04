@@ -193,16 +193,22 @@ app.post("/send", async (req: express.Request, res: express.Response) => {
     res.status(400).json({ error: "Missing 'to' field" });
     return;
   }
+
+  const SEND_TIMEOUT = 60000;
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error("Send operation timed out")), SEND_TIMEOUT)
+  );
+
   try {
     if (filePath) {
       const mt = mediaType === "video" ? "video" : "image";
       if (text) {
-        await engine.sendCombined(to, filePath, text, mt);
+        await Promise.race([engine.sendCombined(to, filePath, text, mt), timeout]);
       } else {
         if (mt === "video") {
-          await engine.sendVideo(to, filePath);
+          await Promise.race([engine.sendVideo(to, filePath), timeout]);
         } else {
-          await engine.sendImage(to, filePath);
+          await Promise.race([engine.sendImage(to, filePath), timeout]);
         }
       }
     } else {
@@ -210,7 +216,7 @@ app.post("/send", async (req: express.Request, res: express.Response) => {
         res.status(400).json({ error: "Missing 'text' or 'filePath'" });
         return;
       }
-      await engine.sendText(to, text);
+      await Promise.race([engine.sendText(to, text), timeout]);
     }
     res.json({ success: true });
   } catch (err) {

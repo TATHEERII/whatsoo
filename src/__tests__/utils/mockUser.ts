@@ -1,0 +1,18 @@
+export const mockUser = {
+  id: "user_123",
+  name: "Test User",
+  email: "test@example.com",
+  emailVerified: new Date(),
+  image: "https://example.com/avatar.png",
+  role: "user",
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  password: null,
+  phoneNumber: null,
+  accounts: [],
+  sessions: [],
+  contactLists: [],
+  contacts: [],
+  campaigns: [],
+  templates: [],
+};

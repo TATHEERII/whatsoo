@@ -67,7 +67,7 @@ export class WhatsAppEngineClient {
   }
 
   async send(payload: SendPayload): Promise<{ success: boolean }> {
-    return this.request<{ success: boolean }>("/send", "POST", payload);
+    return this.request<{ success: boolean }>("/send", "POST", payload, 60000);
   }
 
   private async request<T>(
