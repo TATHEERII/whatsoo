@@ -170,6 +170,7 @@ export class WhatsAppEngine extends EventEmitter {
 
       const defaultPuppeteerOptions: Record<string, unknown> = {
         headless: true,
+        protocolTimeout: 60000,
         args: [
           "--no-sandbox",
           "--disable-setuid-sandbox",
@@ -442,6 +443,15 @@ export class WhatsAppEngine extends EventEmitter {
     return obfuscateText(message, this.obfuscationOptions);
   }
 
+  private SEND_TIMEOUT_MS = 45000;
+
+  private withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+    const timer = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    );
+    return Promise.race([p, timer]) as Promise<T>;
+  }
+
   async sendText(to: string, text: string): Promise<void> {
     if (!this.client) {
       throw new Error("WhatsApp client is not initialized");
@@ -456,7 +466,18 @@ export class WhatsAppEngine extends EventEmitter {
 
     const obfuscated = this.obfuscateMessage(text);
     const withDots = addDots(obfuscated);
-    await this.client.sendMessage(chatId, withDots);
+    try {
+      await this.withTimeout(
+        this.client.sendMessage(chatId, withDots),
+        this.SEND_TIMEOUT_MS,
+        "sendText"
+      );
+    } catch (err) {
+      this.ready = false;
+      this.lastError = err instanceof Error ? err.message : "sendText failed";
+      this.emit("status_error", this.lastError);
+      throw err;
+    }
   }
 
   async sendImage(to: string, filePath: string, caption?: string): Promise<void> {
@@ -477,7 +498,18 @@ export class WhatsAppEngine extends EventEmitter {
     if (caption) {
       options.caption = this.obfuscateMessage(caption);
     }
-    await this.client.sendMessage(chatId, media, options);
+    try {
+      await this.withTimeout(
+        this.client.sendMessage(chatId, media, options),
+        this.SEND_TIMEOUT_MS,
+        "sendImage"
+      );
+    } catch (err) {
+      this.ready = false;
+      this.lastError = err instanceof Error ? err.message : "sendImage failed";
+      this.emit("status_error", this.lastError);
+      throw err;
+    }
   }
 
   async sendVideo(to: string, filePath: string, caption?: string): Promise<void> {
@@ -500,7 +532,18 @@ export class WhatsAppEngine extends EventEmitter {
     if (caption) {
       options.caption = this.obfuscateMessage(caption);
     }
-    await this.client.sendMessage(chatId, media, options);
+    try {
+      await this.withTimeout(
+        this.client.sendMessage(chatId, media, options),
+        this.SEND_TIMEOUT_MS,
+        "sendVideo"
+      );
+    } catch (err) {
+      this.ready = false;
+      this.lastError = err instanceof Error ? err.message : "sendVideo failed";
+      this.emit("status_error", this.lastError);
+      throw err;
+    }
   }
 
   async sendCombined(
